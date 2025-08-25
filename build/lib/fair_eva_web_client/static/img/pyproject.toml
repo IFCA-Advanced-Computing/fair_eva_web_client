@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fair-eva-web-client-theme"
+version = "0.1.0"
+description = "Base moderna (header/footer/index) y tema de color para FAIR EVA"
+authors = [{name = "FAIR EVA helpers"}]
+requires-python = ">=3.8"
+
+[tool.setuptools.package-data]
+fair_eva_web_client = [
+  "templates/*.html",
+  "templates/snippets/*.html",
+  "static/css/*",
+  "static/js/*",
+  "static/img/*"
+]

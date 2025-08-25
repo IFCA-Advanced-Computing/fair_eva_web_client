@@ -1,0 +1,115 @@
+Metadata-Version: 2.4
+Name: fair-eva-web-client
+Version: 0.1.0
+Summary: A minimal web client for the FAIR EVA evaluator
+Author: FAIR EVA Team
+Classifier: Programming Language :: Python :: 3
+Classifier: Framework :: Flask
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: Flask>=2.2
+Requires-Dist: requests>=2.0
+
+# FAIR_eva_web_client
+
+This repository contains a lightweight web interface for the
+[FAIR EVA](https://github.com/IFCA-Advanced-Computing/FAIR_eva) evaluator.  It
+focuses exclusively on the user interface component so that you can embed it
+into your own projects without pulling in the entire backend and plugin
+framework.  The client calls the FAIR EVA API to evaluate the FAIRness of
+digital objects and presents a simple, customisable dashboard showing the
+results.
+
+## Features
+
+* **Flask web interface** – provides a small form where users enter a persistent
+  identifier such as a DOI or handle.  Optional fields for the repository
+  (plugin) name and OAI‑PMH endpoint are supported.
+* **Configurable API endpoint** – use the `--api-url` option or the
+  `FAIR_EVA_API_URL` environment variable to point the client at a remote FAIR
+  EVA instance.  The default is `http://localhost:9090`.
+* **Development mode** – enable `--dev` to read evaluation results from a JSON
+  file instead of sending HTTP requests.  This is handy during development or
+  offline demonstrations.  Supply your own file via `--sample-file` or rely
+  on the packaged `data/salida_new.json`.
+* **Simple result page** – the interface computes weighted scores for the
+  principles (Findable, Accessible, Interoperable, Reusable) and the overall
+  FAIRness.  Colour coded bars and tables summarise each indicator’s points,
+  weight, status and messages.
+* **Customisable branding** – configure the page title, logo link and logo
+  image using command line flags (`--title`, `--logo-url`, `--logo-image`) or
+  the corresponding environment variables.
+* **Minimal dependencies** – only `Flask` and `requests` are required.  No
+  database is used and there are no external services beyond the FAIR EVA API.
+
+## Installation
+
+First, ensure you have Python 3.8 or newer.  Clone or unpack this repository
+and then install it using pip:
+
+```bash
+pip install .
+```
+
+This command will register a console script called `fair-eva-web-client` in
+your Python environment.
+
+## Usage
+
+Run the development server via the console script or by invoking the module
+directly.  Command line options allow you to customise the behaviour:
+
+```bash
+fair-eva-web-client             # Run against a local FAIR EVA API (default)
+
+fair-eva-web-client --port 8080 --api-url https://fair.example.org:9090
+                              # Run on a different port and point to a remote API
+
+fair-eva-web-client --dev      # Development mode using the packaged sample data
+
+fair-eva-web-client --dev --sample-file /path/to/your/data.json
+                              # Development mode with a custom sample file
+
+fair-eva-web-client --title "My FAIR EVA" --logo-url https://example.com \
+                   --logo-image mylogo.png
+                              # Change the title and logo
+```
+
+You can also supply the configuration via environment variables:
+
+* `FAIR_EVA_API_URL` – base URL of the FAIR EVA API (e.g. `https://fair.example.org`).
+* `FAIR_EVA_API_PORT` – port on which the FAIR EVA API listens (default `9090`).
+* `FAIR_EVA_TITLE` – title shown in the browser tab.
+* `FAIR_EVA_LOGO_URL` – hyperlink applied to the logo in the navigation bar.
+* `FAIR_EVA_LOGO_IMAGE` – filename under `static/img/` to use as the logo.
+* `FAIR_EVA_DEV` – set to `1` to enable development mode.
+* `FAIR_EVA_SAMPLE_FILE` – path to a JSON file containing sample evaluation data for development mode.
+
+When running in development mode the sample file is expected to follow the
+same structure as the FAIR EVA API response, namely a top‑level mapping
+containing an arbitrary persistent identifier key and, optionally, an
+`evaluator_logs` entry.  This repository includes a sample file at
+`fair_eva_web_client/data/salida_new.json` which can be used for testing.
+
+## Repository contents
+
+* `fair_eva_web_client/` – Python package containing the Flask application, templates and static assets.
+* `fair_eva_web_client/static/img/` – images used by the interface.  You can drop your own logo images here.
+* `fair_eva_web_client/data/` – example JSON files for development mode.
+* `pyproject.toml` – package configuration for installation.
+* `README.md` – this documentation.
+
+## Contributing
+
+Contributions are welcome!  If you wish to extend the functionality or fix a
+bug, please open an issue or submit a pull request.  Note that this client is
+not a drop‑in replacement for the full FAIR EVA project: it deliberately
+omits the backend evaluation logic and plugin mechanism.  See the upstream
+project for details on those components.
+
+## License
+
+This project is released under the MIT License.  It reuses ideas from the
+FAIR EVA web interface but is not affiliated with the original maintainers.

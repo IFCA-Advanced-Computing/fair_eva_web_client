@@ -1,0 +1,72 @@
+{% extends 'base_modern.html' %}
+{% block body %}
+<section class="container">
+  <div class="text-center mb-4">
+    <h2 class="fw-semibold mb-2">{{ _('FAIR EVA') }}</h2>
+    <p class="text-muted m-0">
+      {{ _('FAIR EVA is a web service that measures the FAIR alignment of digital objects using RDA FAIR Data Maturity Indicators, with a focus on institutional repositories.') }}
+    </p>
+  </div>
+
+  <div class="row g-4 align-items-stretch">
+    <div class="col-12 col-lg-7">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body p-4">
+          <h3 class="h5 mb-3">{{ _('Evaluate a digital object') }}</h3>
+
+          <form action="/evaluator" method="POST" class="needs-validation" novalidate>
+            <div class="mb-3">
+              <label for="item_id" class="form-label">{{ _('Handle PID, DOI or DIGITAL.CSIC ID') }}</label>
+              <div class="form-text">{{ _('Paste here the identifier you want to evaluate.') }}</div>
+              {{ form.item_id }}
+            </div>
+            <div class="mt-3">
+              <label for="plugin" class="form-label">{{ _('Plugin') }}</label>
+              <div class="form-text">{{ _('Choose an evaluation plugin (only active plugins are listed).') }}</div>
+              {{ form.plugin(class="form-select", id="plugin") }}
+            </div>
+
+            {% if aditional_params and local_eva != 'True' %}
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="repo" class="form-label">{{ _('Repository') }}</label>
+                {{ form.repo(class="form-select", id="repo") }}
+              </div>
+              <div class="col-md-6">
+                <label for="oai_base" class="form-label">{{ _('OAI-PMH Endpoint') }}</label>
+                {{ form.oai_base(class="form-control", id="oai_base", placeholder="https://repo.org/oai") }}
+              </div>
+            </div>
+            {% endif %}
+
+            <div class="mt-4">
+              <button type="submit" class="btn btn-primary btn-lg px-4">{{ _('RUN TEST') }}</button>
+		        </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-5">
+      <div class="card h-100 border-0 bg-light shadow-sm">
+        <div class="card-body p-4">
+          <h3 class="h6 text-uppercase text-muted">{{ _('How it works') }}</h3>
+          <ul class="list-unstyled mt-3 small">
+            <li class="mb-2">✅ {{ _('Paste a PID/DOI/handle or a DIGITAL.CSIC ID.') }}</li>
+            <li class="mb-2">⚙️ {{ _('Pick a plugin (when applicable) and optional repository/OAI-PMH.') }}</li>
+            <li class="mb-2">📊 {{ _('Get an overview chart per group (F, A, I, R) and expand tests for details.') }}</li>
+            <li class="mb-2">💡 {{ _('Read technical feedback and tips to improve the score.') }}</li>
+          </ul>
+
+          <div class="mt-4 p-3 rounded-3 border bg-white">
+            <strong>{{ _('Disclaimer:') }}</strong>
+            <div class="text-muted small">
+              {{ _('The test results shown here are based on preliminary data and code which still is under development.') }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

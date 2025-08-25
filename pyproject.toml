@@ -1,0 +1,44 @@
+[build-system]
+# We do not specify a minimum version constraint for setuptools here because
+# the environment may ship with an older release.  Any reasonably recent
+# version of setuptools is sufficient to build this project.
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fair-eva-web-client"
+version = "0.1.0"
+description = "A minimal web client for the FAIR EVA evaluator"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [ { name = "FAIR EVA Team" } ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Framework :: Flask",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "Flask>=2.2",
+    "requests>=2.0"
+]
+
+[project.scripts]
+fair-eva-web-client = "fair_eva_web_client.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fair_eva_web_client", "fair_eva_web_client.*"]
+
+[tool.setuptools.package-data]
+fair_eva_web_client = [
+  # Include all HTML templates and subdirectories
+  "templates/*.html",
+  "templates/snippets/*.html",
+  # Include all static assets (CSS, JS, images)
+  "static/css/*",
+  "static/js/*",
+  "static/img/*",
+  # Include sample data for dev mode
+  "data/*",
+]
