@@ -1,2 +1,0 @@
-[console_scripts]
-fair-eva-web-client = fair_eva_web_client.app:main
