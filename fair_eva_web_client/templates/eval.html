@@ -24,6 +24,8 @@
     .ring-legend .legend-item{display:inline-flex;align-items:center;gap:.25rem;margin-right:.6rem}
     .ring-card{ border:0; border-radius: var(--card-radius); box-shadow: 0 6px 18px rgba(0,0,0,.07);}
   </style>
+
+  
 {% endblock %}
 
 {% block extra_js %}
@@ -222,29 +224,35 @@
   <!-- Encabezado -->
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
     <div>
-      <h1 class="mb-1">Evaluación FAIR</h1>
+      <h1 class="mb-1">{{ _('FAIR Evaluation') }}</h1>
       <div class="text-muted">
         <span class="me-3"><strong>ID:</strong> {{ resource_id }}</span>
         <span class="me-3"><strong>Plugin:</strong> {{ plugin_name }}</span>
-        <span><strong>Fecha:</strong> {{ (now or '') }}</span>
+        <span><strong>{{ _('Date') }}:</strong> {{ (now or '') }}</span>
       </div>
     </div>
     <div class="d-flex gap-2">
       {% if download_url %}
-        <a class="btn btn-outline-secondary" href="{{ download_url }}" download>Descargar JSON</a>
+        <a class="btn btn-outline-secondary" href="{{ download_url }}" download>{{ _('Download JSON') }}</a>
       {% endif %}
-      <a class="btn btn-primary" href="{{ url_for('index') }}">Nueva evaluación</a>
+      <a class="btn btn-primary" href="{{ url_for('home_' + g.language) }}">{{ _('New assessment') }}</a>
     </div>
   </div>
 
   <!-- Anillos concéntricos: cada anillo = un indicador -->
   <div class="mt-4">
     <div class="d-flex justify-content-between align-items-center mb-2">
-      <h3 class="h5 mb-0">{{ _('Indicadores por grupo (anillos concéntricos)') }}</h3>
-      <div class="ring-legend small text-muted">
-        <span class="legend-item"><span class="dot" style="background:#2ecc71"></span>≥ 80%</span>
-        <span class="legend-item"><span class="dot" style="background:#f1c40f"></span>40–79%</span>
-        <span class="legend-item"><span class="dot" style="background:#e74c3c"></span>&lt; 40%</span>
+      <h3 class="h5 mb-0">{{ _('Indicators per group') }}</h3>
+      <div class="ring-legend small">
+        <span class="legend-item">
+          <span style="display:inline-block;width:.75rem;height:.75rem;border-radius:50%;background:#2ecc71;margin-right:.35rem"></span>≥ 80%
+        </span>
+        <span class="legend-item">
+          <span style="display:inline-block;width:.75rem;height:.75rem;border-radius:50%;background:#f1c40f;margin-right:.35rem"></span>40–79%
+        </span>
+        <span class="legend-item">
+          <span style="display:inline-block;width:.75rem;height:.75rem;border-radius:50%;background:#e74c3c;margin-right:.35rem"></span>&lt; 40%
+        </span>
       </div>
     </div>
 
@@ -299,7 +307,7 @@
                         </div>
 
                         <div class="text-muted small d-flex justify-content-between">
-                          <span>Progreso</span>
+                          <span>{{ _('Progress') }}</span>
                           <span>{{ pct }}%</span>
                         </div>
                       </div>
@@ -315,10 +323,10 @@
   <!-- Acordeones de resultados -->
   <div class="mt-4">
     <div class="d-flex align-items-center justify-content-between mb-2">
-      <h4 class="mb-0">Detalle de indicadores</h4>
+      <h4 class="mb-0">{{ _('Indicators details') }}</h4>
       <div class="btn-group sticky-cta">
-        <button class="btn btn-sm btn-outline-primary" id="expand-all">Expandir todo</button>
-        <button class="btn btn-sm btn-outline-secondary" id="collapse-all">Contraer todo</button>
+        <button class="btn btn-sm btn-outline-primary" id="expand-all">{{ _('Expand all') }}</button>
+        <button class="btn btn-sm btn-outline-secondary" id="collapse-all">{{ _('Contract all') }}</button>
       </div>
     </div>
 
@@ -383,8 +391,7 @@
                         style="border-left: 6px solid {{ status_color }};">
                       <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
                         <div class="d-flex align-items-center gap-2">
-                          <span class="badge bg-light text-dark">{{ it.id }}</span>
-                          <strong>{{ it.title }}</strong>
+                          <span class="badge bg-light text-dark">{{ _(it.id) }}</span>
 
                           {# Punto de estado (opcional) #}
                           <span class="d-inline-block rounded-circle"
@@ -402,7 +409,7 @@
                         </div>
 
                         <div class="d-flex align-items-center gap-2">
-                          <span class="score-badge">Puntos: {{ iscore|round(2) }} / {{ imax|round(2) }}</span>
+                          <span class="score-badge">{{ _('Score') }}: {{ iscore|round(2) }} / {{ imax|round(2) }}</span>
 
                           {# Mini barra opcional  #}
                           <div class="progress" style="width:120px; height:.5rem;">
@@ -432,13 +439,13 @@
                             <div class="p-3 border rounded-3 h-100"
                                 style="border-color: {{ status_color }};">
                               <div class="mb-2">
-                                <div class="text-muted small">Descripción</div>
-                                <div>{{ it.description }}</div>
+                                <div class="text-muted small">{{ _('Description') }}</div>
+                                <div>{{ _("%s.indicator" % it.id) }}</div>
                               </div>
                               {% if it.details %}
                                 <div class="mb-2">
-                                  <div class="text-muted small">Detalles</div>
-                                  <pre class="mb-0 small bg-light p-2 rounded-2">{{ it.details | tojson(indent=2) }}</pre>
+                                  <div class="text-muted small">{{ _('Details') }}</div>
+                                  <pre class="mb-0 small bg-light p-2 rounded-2">{{ _("%s.technical" % it.id) | tojson(indent=2) }}</pre>
                                 </div>
                               {% endif %}
                             </div>
@@ -449,7 +456,7 @@
                                 style="border-color: {{ status_color }};">
                               {% if it.logs %}
                                 <div>
-                                  <div class="text-muted small">Logs / Evidencias</div>
+                                  <div class="text-muted small">{{ _('Logs / Evidences') }}</div>
                                   <ul class="small mb-0">
                                     {% for msg in it.logs %}
                                       <li>{{ msg }}</li>
@@ -459,8 +466,8 @@
                               {% endif %}
                               {% if it.recommendation %}
                                 <div>
-                                  <div class="text-muted small">Recomendación</div>
-                                  <div class="small">{{ it.recommendation }}</div>
+                                  <div class="text-muted small">{{ _('Tip') }}</div>
+                                  <div class="small">{{ _("%s.tips" % it.id) }}</div>
                                 </div>
                               {% endif %}
                             </div>

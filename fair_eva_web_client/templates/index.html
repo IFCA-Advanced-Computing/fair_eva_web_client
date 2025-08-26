@@ -16,7 +16,7 @@
 
           <form action="/evaluator" method="POST" class="needs-validation" novalidate>
             <div class="mb-3">
-              <label for="item_id" class="form-label">{{ _('Handle PID, DOI or DIGITAL.CSIC ID') }}</label>
+              <label for="item_id" class="form-label">{{ _('Handle PID, DOI or internal ID') }}</label>
               <div class="form-text">{{ _('Paste here the identifier you want to evaluate.') }}</div>
               {{ form.item_id }}
             </div>
@@ -52,7 +52,7 @@
         <div class="card-body p-4">
           <h3 class="h6 text-uppercase text-muted">{{ _('How it works') }}</h3>
           <ul class="list-unstyled mt-3 small">
-            <li class="mb-2">✅ {{ _('Paste a PID/DOI/handle or a DIGITAL.CSIC ID.') }}</li>
+            <li class="mb-2">✅ {{ _('Paste a PID/DOI/handle or a internal ID.') }}</li>
             <li class="mb-2">⚙️ {{ _('Pick a plugin (when applicable) and optional repository/OAI-PMH.') }}</li>
             <li class="mb-2">📊 {{ _('Get an overview chart per group (F, A, I, R) and expand tests for details.') }}</li>
             <li class="mb-2">💡 {{ _('Read technical feedback and tips to improve the score.') }}</li>

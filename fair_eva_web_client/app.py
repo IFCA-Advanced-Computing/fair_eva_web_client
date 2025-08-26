@@ -15,8 +15,18 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, List
 
-from flask import Flask, render_template, redirect, url_for, request
-# forms.py (o dentro de app.py si prefieres no separar)
+from flask import (
+    Flask,
+    g,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_babel import Babel, gettext
+from flask_babel import lazy_gettext as _l
 
 from flask_wtf import FlaskForm
 from wtforms import StringField, SelectField, SubmitField
@@ -193,13 +203,89 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         ],
     }
 )
+    babel = Babel(app)
     app.secret_key = "super-secret"  # Necesario para CSRF en Flask-WTF
+
+
+    @app.before_request
+    def get_global_language():
+        g.babel = babel
+        success_message = _l("Test")
+        g.language = get_locale()
+
+
+    def get_locale():
+        lang = request.path[1:].split("/", 1)[0]
+
+        if lang in app.config["BABEL_LOCALES"]:
+            session["lang"] = lang
+            return lang
+
+        if lang_in_session():
+            return session.get("lang")
+
+        default_lang = fallback_lang()
+        session["lang"] = default_lang
+        return default_lang
+
+
+    babel.init_app(app, locale_selector=get_locale)
+
+
+    def lang_in_session():
+        return (
+            session.get("lang") is not None
+            and session.get("lang") in app.config["BABEL_LOCALES"]
+        )
+
+
+    def fallback_lang():
+        best_match = request.accept_languages.best_match(app.config["BABEL_LOCALES"])
+
+        if best_match is None:
+            return app.config["BABEL_DEFAULT_LOCALE"]
+
+        if "en" in best_match:
+            return "en"
+
+        return "es"
+
+
+    @app.route("/", defaults={"path": ""}, methods=["GET", "POST"])
+    @app.route("/<path:path>", methods=["GET", "POST"])
+    def catch_all(path):
+        if path == "":
+            return redirect(url_for("home_" + g.language))
+        subpaths = path.split("/")
+        if len(subpaths) > 2:
+            subpaths.pop(0)
+        if subpaths[0] in app.config["BABEL_LOCALES"]:
+            if len(subpaths) > 1:
+                if subpaths[1] in app.config["PATHS"]:
+                    return redirect(
+                        url_for(subpaths[1] + "_" + subpaths[0], **request.args)
+                    )
+                else:
+                    return redirect(url_for("not-found_" + subpaths[0]))
+            else:
+                return redirect(url_for("home_" + subpaths[0]))
+        else:
+            if subpaths[0] in app.config["PATHS"]:
+                return redirect(url_for(subpaths[0] + "_" + g.language, item_id=request.values.get("item_id"), plugin=request.values.get("plugin")))
+            else:
+                if len(subpaths) > 1:
+                    if subpaths[1] in app.config["PATHS"]:
+                        return redirect(
+                            url_for(subpaths[1] + "_" + g.language, **request.args)
+                        )
+                else:
+                    return redirect(url_for("not-found_" + g.language))
 
     # Simulación de plugins activos (esto lo puedes cambiar por la lectura real desde config)
     AVAILABLE_PLUGINS = [
         ("signposting", "Signposting (Zenodo/CSIC)"),
         ("oai_pmh", "OAI-PMH"),
-        ("custom_plugin", "Custom Plugin"),
+        ("ai4os", "AI4EOSC Plugin"),
     ]
     app.config.setdefault("SECRET_KEY", "dev-change-me")       # Necesario para CSRF de Flask-WTF
     app.config.setdefault("WTF_CSRF_ENABLED", True)
@@ -207,7 +293,6 @@ def create_app(config: Optional[Settings] = None) -> Flask:
 
     # Inject configuration values into templates via context processor
     try:
-        from flask_babel import Babel, _
         babel = Babel(app)
 
         # Si usas selector de locale:
@@ -219,7 +304,8 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         # Fallback por si no quieres Babel en dev
         app.jinja_env.globals["_"] = lambda s: s
 
-    @app.route("/", methods=["GET", "POST"])
+    @app.route("/es", endpoint="home_es")
+    @app.route("/en", endpoint="home_en")
     def index():
         
         form = IdentifierForm()
@@ -230,31 +316,40 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         if form.validate_on_submit():
             item_id = form.item_id.data.strip()
             plugin = form.plugin.data
-            return redirect(url_for("evaluate", item_id=item_id, plugin=plugin))
+            return redirect(url_for("evaluator", item_id=item_id, plugin=plugin))
 
         return render_template("index.html", form=form)
 
-    @app.route("/evaluate", methods=["GET", "POST"])# añade este import arriba del fichero
-
-    @app.route("/evaluator", methods=["GET", "POST"])
+    @app.route("/es/evaluator", endpoint="evaluator_es", methods=["GET", "POST"])
+    @app.route("/en/evaluator", endpoint="evaluator_en", methods=["GET", "POST"])
     def evaluator():
+        app.config["BABEL_TRANSLATION_DIRECTORIES"] = "translations"
+        babel.init_app(app, locale_selector=get_locale)
         """Perform an evaluation and render the results page (compatible legacy + modern UI)."""
         # Acepta tanto GET como POST (request.values cubre ambos)
-        item_id = (request.values.get("item_id") or "").strip()
-        plugin = (request.values.get("plugin") or "").strip()
-        repo = (request.values.get("repo") or "").strip()
-        oai_base = (request.values.get("oai_base") or "").strip()
+        item_id = (request.args.get("item_id") or "").strip()
+        plugin = (request.args.get("plugin") or "").strip()
+        repo = plugin
+        oai_base = ""
 
         if not item_id:
-            return redirect(url_for("index"))
+            return redirect(url_for("home_"+ g.language))
+        
+        # ------------------------------
+        # 1) plugin translation TODO
+        # ------------------------------
+        
+        if os.path.exists("plugins/%s/translations" % plugin):
+            app.config["BABEL_TRANSLATION_DIRECTORIES"] = (
+                "plugins/%s/translations" % repo
+            )
+            babel.init_app(app, locale_selector=get_locale)
 
         # ------------------------------
         # 1) Carga datos (dev o API)
         # ------------------------------
         result_data: Optional[Dict[str, Any]] = None
 
-        # TO CHANGE si quieres que venga de config/env
-        cfg.dev_mode = True  # <-- respeta tu comentario, fuerza dev para pruebas
         try:
             if cfg.dev_mode:
                 with open(cfg.sample_file, "r", encoding="utf-8") as f:
@@ -268,7 +363,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 base = cfg.api_url.rstrip("/") + f":{cfg.api_port}"
                 # Ajusta el endpoint real si es distinto:
                 endpoint = f"{base}/v1.0/rda/rda_all"
-                payload: Dict[str, Any] = {"id": item_id, "lang": "en"}
+                payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
                 resp = requests.post(endpoint, json=payload, timeout=30)
                 resp.raise_for_status()
                 resp_json = resp.json()
@@ -356,7 +451,12 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                     tres = group[key]['score']
                     score = group[key]["points"]
                     max_s = 100
-                    priority = "essential" #TODO
+                    #TODO Check priority
+                    priority = "optional"
+                    if group[key]['score']['weight'] == 20:
+                        priority = "essential" #TODO
+                    elif group[key]['score']['weight'] > 10:
+                        priority = "important"
                     # logs/feedback pueden venir como string o lista
                     logs_raw = group[key]['msg']
                     recommendation = "RECommendations"
@@ -368,7 +468,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         "score": score,
                         "max_score": max_s,
                         "priority": priority,
-                        "logs": "logs",
+                        "logs": logs_raw,
                         "recommendation": recommendation,
                         "details": details,
                     })
@@ -440,6 +540,26 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         )
 
 
+    @app.route("/es/not-found", endpoint="not-found_es")
+    @app.route("/en/not-found", endpoint="not-found_en")
+    def not_found():
+        return render_template("not-found.html")
+
+
+    @app.route("/es/faq", endpoint="faq_es")
+    @app.route("/en/faq", endpoint="faq_en")
+    def faq():
+        return render_template("faq.html")
+
+
+    @app.route("/es/about_us", endpoint="about_us_es")
+    @app.route("/en/about_us", endpoint="about_us_en")
+    def about_us():
+        if session.get("lang") == "es":
+            return render_template("acerca_de.html")
+        else:
+            return render_template("about_us.html")
+        
     @app.route("/error")
     def error() -> str:
         """Simple error page."""
