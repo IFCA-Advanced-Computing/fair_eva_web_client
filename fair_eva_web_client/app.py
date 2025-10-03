@@ -130,7 +130,10 @@ def compute_scores(data: Dict[str, Any]) -> Tuple[Dict[str, Any], float, str]:
             messages = test.get("msg")
             # To avoid HTML injection, join messages safely
             if isinstance(messages, list):
-                formatted_msg = [m.get("message", "") for m in messages]
+                try:
+                    formatted_msg = [m.get("message", "") for m in messages]
+                except:
+                    formatted_msg = "Problem generating message" # TODO
             else:
                 formatted_msg = messages or []
             processed[key] = {
