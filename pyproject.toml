@@ -22,7 +22,8 @@ dependencies = [
     "Flask>=2.2",
     "requests>=2.0",
     "Babel",
-    "flask_babel"
+    "flask-babel",
+    "flask-wtf"
 ]
 
 [project.scripts]
