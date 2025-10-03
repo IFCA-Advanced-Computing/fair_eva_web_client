@@ -20,7 +20,9 @@ classifiers = [
 ]
 dependencies = [
     "Flask>=2.2",
-    "requests>=2.0"
+    "requests>=2.0",
+    "Babel",
+    "flask_babel"
 ]
 
 [project.scripts]
