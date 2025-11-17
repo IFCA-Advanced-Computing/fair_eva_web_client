@@ -72,7 +72,7 @@ You can also supply the configuration via environment variables:
 * `FAIR_EVA_LOGO_IMAGE` – filename under `static/img/` to use as the logo.
 * `FAIR_EVA_DEV` – set to `1` to enable development mode.
 * `FAIR_EVA_SAMPLE_FILE` – path to a JSON file containing sample evaluation data for development mode.
-* `FAIR_EVA_PLUGINS_FILE` – optional path to a JSON file describing available plugins.  The file should provide a list of two-element arrays (``["id", "Label"]``) or objects with ``id``/``name`` and ``label``/``title``/``display_name`` fields.
+* `FAIR_EVA_PLUGINS_FILE` – optional path to a JSON file describing available plugins.  The file should provide a list of two-element arrays (``["id", "Label"]``) or objects with ``id``/``name`` and ``label``/``title``/``display_name`` fields.  If this variable is not set the application will look for installed plugins under ``fair_eva/plugin/*`` inside your Python environment (for example under ``lib64/python3.12/site-packages/fair_eva/plugin/`` inside a virtualenv).
 
 When running in development mode the sample file is expected to follow the
 same structure as the FAIR EVA API response, namely a top‑level mapping
