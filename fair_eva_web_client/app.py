@@ -10,9 +10,12 @@ environment variables or command‑line flags.
 
 from __future__ import annotations
 from datetime import datetime
+import importlib
 import json
 import os
+import sys
 from dataclasses import dataclass
+from importlib import metadata
 from typing import Any, Dict, Optional, Tuple, List
 
 from flask import (
@@ -74,6 +77,122 @@ class Settings:
         "FAIR_EVA_SAMPLE_FILE",
         os.path.join(os.path.dirname(__file__), "data", "salida_new.json"),
     )
+
+
+###############################################################################
+# Plugin helpers
+###############################################################################
+
+
+def load_available_plugins(config_path: Optional[str] = None) -> List[Tuple[str, str]]:
+    """Return the list of plugins defined by configuration or installed packages.
+
+    The loader follows a three-step approach:
+
+    1. If the ``FAIR_EVA_PLUGINS_FILE`` environment variable (or the explicit
+       ``config_path`` argument) points to a JSON file, this function expects it
+       to contain either a list of ``{"id": "...", "label": "..."}`` objects
+       or a list of two-element arrays/tuples.  Only entries with both parts are
+       kept.
+    2. If no config file is provided, it searches for installed plugins under
+       ``fair_eva/plugin`` directories within any entry in ``sys.path`` (for
+       example ``lib64/python3.12/site-packages/fair_eva/plugin`` inside a
+       virtual environment).  Each subdirectory is treated as a plugin and, if
+       importable, its ``DISPLAY_NAME`` or ``name`` attribute is used as the
+       label; otherwise the folder name is used.
+    3. Failing that, it inspects Python entry points under the
+       ``fair_eva.plugins`` group.  The entry point name is treated as the
+       plugin identifier.  If the loaded object exposes ``DISPLAY_NAME`` or
+       ``name`` attributes they are used as the label; otherwise, the entry
+       point name is used for both fields.
+
+    When no plugins can be resolved dynamically, an empty list is returned so
+    the caller can decide on a fallback strategy.
+    """
+
+    plugins: List[Tuple[str, str]] = []
+
+    path = config_path or os.getenv("FAIR_EVA_PLUGINS_FILE")
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            file_plugins: List[Tuple[str, str]] = []
+            if isinstance(data, list):
+                for entry in data:
+                    plugin_id: Optional[str] = None
+                    label: Optional[str] = None
+                    if isinstance(entry, dict):
+                        plugin_id = entry.get("id") or entry.get("name")
+                        label = (
+                            entry.get("label")
+                            or entry.get("title")
+                            or entry.get("display_name")
+                        )
+                    elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                        plugin_id, label = entry[0], entry[1]
+                    if plugin_id and label:
+                        file_plugins.append((str(plugin_id), str(label)))
+            if file_plugins:
+                return file_plugins
+        except Exception:
+            # If the file cannot be read or parsed, continue with the next
+            # discovery strategy.
+            pass
+
+    seen: set[str] = set()
+
+    # Discover plugins installed in site-packages under fair_eva/plugin/*
+    plugin_roots = []
+    for path_entry in sys.path:
+        candidate = os.path.join(path_entry, "fair_eva", "plugin")
+        if os.path.isdir(candidate):
+            plugin_roots.append(candidate)
+
+    for root in plugin_roots:
+        for entry in os.listdir(root):
+            full_path = os.path.join(root, entry)
+            if not os.path.isdir(full_path) or entry.startswith("__"):
+                continue
+            plugin_id = entry
+            label: Optional[str] = None
+            if plugin_id in seen:
+                continue
+            try:
+                plugin_mod = importlib.import_module(f"fair_eva.plugin.{plugin_id}")
+                label = getattr(plugin_mod, "DISPLAY_NAME", None) or getattr(
+                    plugin_mod, "name", None
+                )
+            except Exception:
+                label = None
+            seen.add(plugin_id)
+            plugins.append((plugin_id, str(label or plugin_id)))
+    if plugins:
+        return plugins
+
+    try:
+        entry_points = metadata.entry_points()
+        candidates = (
+            entry_points.select(group="fair_eva.plugins")
+            if hasattr(entry_points, "select")
+            else entry_points.get("fair_eva.plugins", [])
+        )
+        plugins = []
+        for ep in candidates:
+            try:
+                plugin_obj = ep.load()
+                label = getattr(plugin_obj, "DISPLAY_NAME", None) or getattr(
+                    plugin_obj, "name", None
+                )
+            except Exception:
+                label = None
+            plugins.append((ep.name, str(label or ep.name)))
+        if plugins:
+            return plugins
+    except Exception:
+        pass
+
+    return []
 
 
 ###############################################################################
@@ -284,12 +403,13 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 else:
                     return redirect(url_for("not-found_" + g.language))
 
-    # Simulación de plugins activos (esto lo puedes cambiar por la lectura real desde config)
-    AVAILABLE_PLUGINS = [
-        ("signposting", "Signposting (Zenodo/CSIC)"),
-        ("oai_pmh", "OAI-PMH"),
-        ("ai4os", "AI4EOSC Plugin"),
-    ]
+    AVAILABLE_PLUGINS = load_available_plugins()
+    if not AVAILABLE_PLUGINS:
+        AVAILABLE_PLUGINS = [
+            ("signposting", "Signposting (Zenodo/CSIC)"),
+            ("oai_pmh", "OAI-PMH"),
+            ("ai4os", "AI4EOSC Plugin"),
+        ]
     app.config.setdefault("SECRET_KEY", "dev-change-me")       # Necesario para CSRF de Flask-WTF
     app.config.setdefault("WTF_CSRF_ENABLED", True)
     app.config.setdefault("BABEL_DEFAULT_LOCALE", "en")
