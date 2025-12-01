@@ -416,7 +416,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     AVAILABLE_PLUGINS = load_available_plugins()
     if not AVAILABLE_PLUGINS:
         AVAILABLE_PLUGINS = [
-            ("signposting", "Signposting (Zenodo/CSIC)"),
+            ("gbif", "GBIF"),
             ("oai_pmh", "OAI-PMH"),
             ("ai4os", "AI4EOSC Plugin"),
         ]
