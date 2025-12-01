@@ -7,9 +7,11 @@
       <h1 class="h4 mb-3">{{ _('The evaluation is taking longer than expected') }}</h1>
       <p class="text-muted">{{ _('You can wait a bit more or leave us an email to send you the results as soon as they are ready.') }}</p>
 
+      <p class="text-muted small">{{ _('If you submit the form, we will keep querying the evaluator in the background and email you once a response arrives, even if you close this page.') }}</p>
+
       {% if submitted %}
         <div class="alert alert-success" role="alert">
-          {{ _('Request received. We will send the evaluation to %(email)s', email=form.email.data) }}
+          {{ _('Request received. We will send the evaluation to %(email)s as soon as the pending call finishes.', email=form.email.data) }}
         </div>
       {% endif %}
 

@@ -10,6 +10,7 @@ environment variables or command‑line flags.
 
 from __future__ import annotations
 from datetime import datetime
+import threading
 import importlib
 import json
 import os
@@ -705,12 +706,71 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     def request_email():
         form = EmailRequestForm()
         if form.validate_on_submit():
+            lang = session.get("lang") or getattr(g, "language", "en")
+
+            def queue_background_request(
+                cfg: Settings, item_id: str, plugin: str, email: str, notes: str, lang: str
+            ) -> None:
+                """Call the evaluator API in the background and persist the result."""
+
+                base = cfg.api_url.rstrip("/") + f":{cfg.api_port}"
+                endpoint = f"{base}/v1.0/rda/rda_all"
+                payload: Dict[str, Any] = {
+                    "id": item_id,
+                    "repo": plugin,
+                    "lang": lang,
+                }
+                log_dir = os.path.join(os.path.dirname(__file__), "data")
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, "email_requests.log")
+                try:
+                    resp = requests.post(endpoint, json=payload, timeout=600)
+                    resp.raise_for_status()
+                    resp_json = resp.json()
+                    result_path = os.path.join(
+                        log_dir,
+                        f"email_result_{datetime.utcnow().isoformat().replace(':', '-')}.json",
+                    )
+                    with open(result_path, "w", encoding="utf-8") as out:
+                        json.dump(
+                            {
+                                "requested_at": datetime.utcnow().isoformat() + "Z",
+                                "item_id": item_id,
+                                "plugin": plugin,
+                                "email": email,
+                                "notes": notes,
+                                "response": resp_json,
+                            },
+                            out,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    status = "queued"
+                except Exception as exc:
+                    status = f"error: {exc}"
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(
+                        f"{datetime.utcnow().isoformat()}Z\t{item_id}\t{plugin}\t{email}\t{notes.replace(chr(10), ' ')}\t{status}\n"
+                    )
+
+            threading.Thread(
+                target=queue_background_request,
+                args=(
+                    cfg,
+                    form.item_id.data,
+                    form.plugin.data,
+                    form.email.data,
+                    form.notes.data or "",
+                    lang,
+                ),
+                daemon=True,
+            ).start()
             log_dir = os.path.join(os.path.dirname(__file__), "data")
             os.makedirs(log_dir, exist_ok=True)
             log_path = os.path.join(log_dir, "email_requests.log")
             with open(log_path, "a", encoding="utf-8") as fh:
                 fh.write(
-                    f"{datetime.utcnow().isoformat()}Z\t{form.item_id.data}\t{form.plugin.data}\t{form.email.data}\t{(form.notes.data or '').replace(chr(10), ' ')}\n"
+                    f"{datetime.utcnow().isoformat()}Z\t{form.item_id.data}\t{form.plugin.data}\t{form.email.data}\t{(form.notes.data or '').replace(chr(10), ' ')}\tqueued\n"
                 )
             return render_template(
                 "timeout.html",
