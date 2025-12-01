@@ -9,12 +9,15 @@ environment variables or command‑line flags.
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.message import EmailMessage
 import threading
 import importlib
 import json
 import os
 import sys
+import smtplib
+import time
 from dataclasses import dataclass
 from importlib import metadata
 from typing import Any, Dict, Optional, Tuple, List
@@ -294,6 +297,44 @@ class EmailRequestForm(FlaskForm):
     email = StringField(_l("Email"), validators=[DataRequired(), Email()])
     notes = TextAreaField(_l("Additional notes"))
     submit = SubmitField(_l("Send results by email"))
+
+
+def send_email_message(to: str, subject: str, body: str) -> Tuple[bool, str]:
+    """Send a plaintext email using SMTP settings from the environment.
+
+    Environment variables:
+        FAIR_EVA_SMTP_HOST: SMTP server hostname.
+        FAIR_EVA_SMTP_PORT: SMTP server port (default 587).
+        FAIR_EVA_SMTP_USER: Optional username for authentication.
+        FAIR_EVA_SMTP_PASSWORD: Optional password for authentication.
+        FAIR_EVA_SMTP_TLS: Enable STARTTLS when set to "1" (default).
+    """
+
+    host = os.getenv("FAIR_EVA_SMTP_HOST")
+    if not host:
+        return False, "FAIR_EVA_SMTP_HOST not configured"
+
+    port = int(os.getenv("FAIR_EVA_SMTP_PORT", "587"))
+    username = os.getenv("FAIR_EVA_SMTP_USER")
+    password = os.getenv("FAIR_EVA_SMTP_PASSWORD")
+    use_tls = os.getenv("FAIR_EVA_SMTP_TLS", "1") != "0"
+
+    message = EmailMessage()
+    message["To"] = to
+    message["Subject"] = subject
+    message["From"] = username or f"fair-eva@{host}"
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if username and password:
+                smtp.login(username, password)
+            smtp.send_message(message)
+        return True, "sent"
+    except Exception as exc:  # pragma: no cover - network errors
+        return False, str(exc)
 
 ###############################################################################
 # Application factory and routes
@@ -711,7 +752,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             def queue_background_request(
                 cfg: Settings, item_id: str, plugin: str, email: str, notes: str, lang: str
             ) -> None:
-                """Call the evaluator API in the background and persist the result."""
+                """Poll the evaluator API until it responds and send the result via email."""
 
                 base = cfg.api_url.rstrip("/") + f":{cfg.api_port}"
                 endpoint = f"{base}/v1.0/rda/rda_all"
@@ -720,13 +761,32 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                     "repo": plugin,
                     "lang": lang,
                 }
+
+                max_wait_minutes = int(os.getenv("FAIR_EVA_EMAIL_WAIT_MINUTES", "10"))
+                poll_interval = int(os.getenv("FAIR_EVA_EMAIL_POLL_SECONDS", "15"))
+                deadline = datetime.utcnow() + timedelta(minutes=max_wait_minutes)
+
                 log_dir = os.path.join(os.path.dirname(__file__), "data")
                 os.makedirs(log_dir, exist_ok=True)
                 log_path = os.path.join(log_dir, "email_requests.log")
-                try:
-                    resp = requests.post(endpoint, json=payload, timeout=600)
-                    resp.raise_for_status()
-                    resp_json = resp.json()
+
+                resp_json: Optional[Dict[str, Any]] = None
+                last_error: Optional[str] = None
+
+                while datetime.utcnow() < deadline:
+                    try:
+                        resp = requests.post(endpoint, json=payload, timeout=60)
+                        resp.raise_for_status()
+                        resp_json = resp.json()
+                        break
+                    except Exception as exc:
+                        last_error = str(exc)
+                        time.sleep(poll_interval)
+
+                status: str
+                result_path: Optional[str] = None
+
+                if resp_json is not None:
                     result_path = os.path.join(
                         log_dir,
                         f"email_result_{datetime.utcnow().isoformat().replace(':', '-')}.json",
@@ -745,9 +805,19 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                             ensure_ascii=False,
                             indent=2,
                         )
-                    status = "queued"
-                except Exception as exc:
-                    status = f"error: {exc}"
+                    subject = f"FAIR EVA results for {item_id}"
+                    body = (
+                        "Your evaluation has finished.\n\n"
+                        f"Identifier: {item_id}\n"
+                        f"Plugin: {plugin}\n"
+                        f"Notes: {notes}\n\n"
+                        f"Full response:\n{json.dumps(resp_json, ensure_ascii=False, indent=2)}"
+                    )
+                    sent, detail = send_email_message(email, subject, body)
+                    status = "email_sent" if sent else f"email_failed: {detail}"
+                else:
+                    status = f"error: {last_error or 'timeout waiting for evaluator'}"
+
                 with open(log_path, "a", encoding="utf-8") as fh:
                     fh.write(
                         f"{datetime.utcnow().isoformat()}Z\t{item_id}\t{plugin}\t{email}\t{notes.replace(chr(10), ' ')}\t{status}\n"
