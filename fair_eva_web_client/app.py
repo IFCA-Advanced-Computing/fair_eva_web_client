@@ -9,11 +9,15 @@ environment variables or command‑line flags.
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.message import EmailMessage
+import threading
 import importlib
 import json
 import os
 import sys
+import smtplib
+import time
 from dataclasses import dataclass
 from importlib import metadata
 from typing import Any, Dict, Optional, Tuple, List
@@ -32,8 +36,8 @@ from flask_babel import Babel, gettext
 from flask_babel import lazy_gettext as _l
 
 from flask_wtf import FlaskForm
-from wtforms import StringField, SelectField, SubmitField
-from wtforms.validators import DataRequired
+from wtforms import HiddenField, StringField, SelectField, SubmitField, TextAreaField
+from wtforms.validators import DataRequired, Email
 
 
 
@@ -284,6 +288,54 @@ class IdentifierForm(FlaskForm):
     plugin = SelectField("Select plugin", choices=[], validators=[DataRequired()])
     submit = SubmitField("Evaluate")
 
+
+class EmailRequestForm(FlaskForm):
+    """Form shown when the API takes too long and the user wants an email copy."""
+
+    item_id = HiddenField(validators=[DataRequired()])
+    plugin = HiddenField(validators=[DataRequired()])
+    email = StringField(_l("Email"), validators=[DataRequired(), Email()])
+    notes = TextAreaField(_l("Additional notes"))
+    submit = SubmitField(_l("Send results by email"))
+
+
+def send_email_message(to: str, subject: str, body: str) -> Tuple[bool, str]:
+    """Send a plaintext email using SMTP settings from the environment.
+
+    Environment variables:
+        FAIR_EVA_SMTP_HOST: SMTP server hostname.
+        FAIR_EVA_SMTP_PORT: SMTP server port (default 587).
+        FAIR_EVA_SMTP_USER: Optional username for authentication.
+        FAIR_EVA_SMTP_PASSWORD: Optional password for authentication.
+        FAIR_EVA_SMTP_TLS: Enable STARTTLS when set to "1" (default).
+    """
+
+    host = os.getenv("FAIR_EVA_SMTP_HOST")
+    if not host:
+        return False, "FAIR_EVA_SMTP_HOST not configured"
+
+    port = int(os.getenv("FAIR_EVA_SMTP_PORT", "587"))
+    username = os.getenv("FAIR_EVA_SMTP_USER")
+    password = os.getenv("FAIR_EVA_SMTP_PASSWORD")
+    use_tls = os.getenv("FAIR_EVA_SMTP_TLS", "1") != "0"
+
+    message = EmailMessage()
+    message["To"] = to
+    message["Subject"] = subject
+    message["From"] = username or f"fair-eva@{host}"
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if username and password:
+                smtp.login(username, password)
+            smtp.send_message(message)
+        return True, "sent"
+    except Exception as exc:  # pragma: no cover - network errors
+        return False, str(exc)
+
 ###############################################################################
 # Application factory and routes
 ###############################################################################
@@ -406,7 +458,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     AVAILABLE_PLUGINS = load_available_plugins()
     if not AVAILABLE_PLUGINS:
         AVAILABLE_PLUGINS = [
-            ("signposting", "Signposting (Zenodo/CSIC)"),
+            ("gbif", "GBIF"),
             ("oai_pmh", "OAI-PMH"),
             ("ai4os", "AI4EOSC Plugin"),
         ]
@@ -487,18 +539,40 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 # Ajusta el endpoint real si es distinto:
                 endpoint = f"{base}/v1.0/rda/rda_all"
                 payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
-                resp = requests.post(endpoint, json=payload, timeout=30)
+                # La API puede tardar; damos hasta 2 minutos antes de ofrecer el plan B
+                resp = requests.post(endpoint, json=payload, timeout=120)
                 resp.raise_for_status()
                 resp_json = resp.json()
                 for k, v in resp_json.items():
                     if k != "evaluator_logs":
                         result_data = v
                         break
+        except requests.Timeout:
+            email_form = EmailRequestForm()
+            email_form.item_id.data = item_id
+            email_form.plugin.data = plugin
+            return render_template(
+                "timeout.html",
+                form=email_form,
+                item_id=item_id,
+                plugin=plugin,
+            )
         except Exception as exc:
             return render_template("error.html", error=f"Error loading evaluation data: {exc}")
 
         if not result_data:
             return render_template("error.html", error="No evaluation data returned.")
+
+        data_test_html: Optional[str] = None
+        data_tests = result_data.get("data_test") if isinstance(result_data, dict) else None
+        if isinstance(data_tests, dict):
+            for _, block in data_tests.items():
+                if not isinstance(block, dict):
+                    continue
+                msg = block.get("msg")
+                if isinstance(msg, str) and msg.strip():
+                    data_test_html = msg
+                    break
 
         # --------------------------------
         # 2) Puntuaciones (tu función)
@@ -651,7 +725,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             div="",
             script_f="",
             div_f="",
-            data_test=None,
+            data_test=data_test_html,
             # --- moderno ---
             resource_id=resource_id,
             plugin_name=plugin_name,
@@ -667,6 +741,122 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     @app.route("/en/not-found", endpoint="not-found_en")
     def not_found():
         return render_template("not-found.html")
+
+
+    @app.route("/request-email", methods=["POST"], endpoint="request_email")
+    def request_email():
+        form = EmailRequestForm()
+        if form.validate_on_submit():
+            lang = session.get("lang") or getattr(g, "language", "en")
+
+            def queue_background_request(
+                cfg: Settings, item_id: str, plugin: str, email: str, notes: str, lang: str
+            ) -> None:
+                """Poll the evaluator API until it responds and send the result via email."""
+
+                base = cfg.api_url.rstrip("/") + f":{cfg.api_port}"
+                endpoint = f"{base}/v1.0/rda/rda_all"
+                payload: Dict[str, Any] = {
+                    "id": item_id,
+                    "repo": plugin,
+                    "lang": lang,
+                }
+
+                max_wait_minutes = int(os.getenv("FAIR_EVA_EMAIL_WAIT_MINUTES", "10"))
+                poll_interval = int(os.getenv("FAIR_EVA_EMAIL_POLL_SECONDS", "15"))
+                deadline = datetime.utcnow() + timedelta(minutes=max_wait_minutes)
+
+                log_dir = os.path.join(os.path.dirname(__file__), "data")
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, "email_requests.log")
+
+                resp_json: Optional[Dict[str, Any]] = None
+                last_error: Optional[str] = None
+
+                while datetime.utcnow() < deadline:
+                    try:
+                        resp = requests.post(endpoint, json=payload, timeout=60)
+                        resp.raise_for_status()
+                        resp_json = resp.json()
+                        break
+                    except Exception as exc:
+                        last_error = str(exc)
+                        time.sleep(poll_interval)
+
+                status: str
+                result_path: Optional[str] = None
+
+                if resp_json is not None:
+                    result_path = os.path.join(
+                        log_dir,
+                        f"email_result_{datetime.utcnow().isoformat().replace(':', '-')}.json",
+                    )
+                    with open(result_path, "w", encoding="utf-8") as out:
+                        json.dump(
+                            {
+                                "requested_at": datetime.utcnow().isoformat() + "Z",
+                                "item_id": item_id,
+                                "plugin": plugin,
+                                "email": email,
+                                "notes": notes,
+                                "response": resp_json,
+                            },
+                            out,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    subject = f"FAIR EVA results for {item_id}"
+                    body = (
+                        "Your evaluation has finished.\n\n"
+                        f"Identifier: {item_id}\n"
+                        f"Plugin: {plugin}\n"
+                        f"Notes: {notes}\n\n"
+                        f"Full response:\n{json.dumps(resp_json, ensure_ascii=False, indent=2)}"
+                    )
+                    sent, detail = send_email_message(email, subject, body)
+                    status = "email_sent" if sent else f"email_failed: {detail}"
+                else:
+                    status = f"error: {last_error or 'timeout waiting for evaluator'}"
+
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(
+                        f"{datetime.utcnow().isoformat()}Z\t{item_id}\t{plugin}\t{email}\t{notes.replace(chr(10), ' ')}\t{status}\n"
+                    )
+
+            threading.Thread(
+                target=queue_background_request,
+                args=(
+                    cfg,
+                    form.item_id.data,
+                    form.plugin.data,
+                    form.email.data,
+                    form.notes.data or "",
+                    lang,
+                ),
+                daemon=True,
+            ).start()
+            log_dir = os.path.join(os.path.dirname(__file__), "data")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "email_requests.log")
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(
+                    f"{datetime.utcnow().isoformat()}Z\t{form.item_id.data}\t{form.plugin.data}\t{form.email.data}\t{(form.notes.data or '').replace(chr(10), ' ')}\tqueued\n"
+                )
+            return render_template(
+                "timeout.html",
+                form=form,
+                item_id=form.item_id.data,
+                plugin=form.plugin.data,
+                submitted=True,
+            )
+
+        return render_template(
+            "timeout.html",
+            form=form,
+            item_id=form.item_id.data,
+            plugin=form.plugin.data,
+            submitted=False,
+        )
 
 
     @app.route("/es/faq", endpoint="faq_es")

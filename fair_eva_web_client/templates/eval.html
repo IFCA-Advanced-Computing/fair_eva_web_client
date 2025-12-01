@@ -484,6 +484,18 @@
 
     {% endfor %}
     </div>
+  </div>
+
+  {% if data_test %}
+    <div class="mt-4">
+      <h4 class="mb-3">{{ _('Additional data tests') }}</h4>
+      <div class="card area-card">
+        <div class="card-body table-responsive">
+          {{ data_test | safe }}
+        </div>
+      </div>
+    </div>
+  {% endif %}
 </div>
 {% endblock %}
 

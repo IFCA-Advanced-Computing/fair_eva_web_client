@@ -23,7 +23,8 @@ dependencies = [
     "requests>=2.0",
     "Babel",
     "flask-babel",
-    "flask-wtf"
+    "flask-wtf",
+    "email-validator"
 ]
 
 [project.scripts]
