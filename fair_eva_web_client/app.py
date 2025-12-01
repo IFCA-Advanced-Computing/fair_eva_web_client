@@ -32,8 +32,8 @@ from flask_babel import Babel, gettext
 from flask_babel import lazy_gettext as _l
 
 from flask_wtf import FlaskForm
-from wtforms import StringField, SelectField, SubmitField
-from wtforms.validators import DataRequired
+from wtforms import HiddenField, StringField, SelectField, SubmitField, TextAreaField
+from wtforms.validators import DataRequired, Email
 
 
 
@@ -284,6 +284,16 @@ class IdentifierForm(FlaskForm):
     plugin = SelectField("Select plugin", choices=[], validators=[DataRequired()])
     submit = SubmitField("Evaluate")
 
+
+class EmailRequestForm(FlaskForm):
+    """Form shown when the API takes too long and the user wants an email copy."""
+
+    item_id = HiddenField(validators=[DataRequired()])
+    plugin = HiddenField(validators=[DataRequired()])
+    email = StringField(_l("Email"), validators=[DataRequired(), Email()])
+    notes = TextAreaField(_l("Additional notes"))
+    submit = SubmitField(_l("Send results by email"))
+
 ###############################################################################
 # Application factory and routes
 ###############################################################################
@@ -487,18 +497,40 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 # Ajusta el endpoint real si es distinto:
                 endpoint = f"{base}/v1.0/rda/rda_all"
                 payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
-                resp = requests.post(endpoint, json=payload, timeout=30)
+                # La API puede tardar; damos hasta 2 minutos antes de ofrecer el plan B
+                resp = requests.post(endpoint, json=payload, timeout=120)
                 resp.raise_for_status()
                 resp_json = resp.json()
                 for k, v in resp_json.items():
                     if k != "evaluator_logs":
                         result_data = v
                         break
+        except requests.Timeout:
+            email_form = EmailRequestForm()
+            email_form.item_id.data = item_id
+            email_form.plugin.data = plugin
+            return render_template(
+                "timeout.html",
+                form=email_form,
+                item_id=item_id,
+                plugin=plugin,
+            )
         except Exception as exc:
             return render_template("error.html", error=f"Error loading evaluation data: {exc}")
 
         if not result_data:
             return render_template("error.html", error="No evaluation data returned.")
+
+        data_test_html: Optional[str] = None
+        data_tests = result_data.get("data_test") if isinstance(result_data, dict) else None
+        if isinstance(data_tests, dict):
+            for _, block in data_tests.items():
+                if not isinstance(block, dict):
+                    continue
+                msg = block.get("msg")
+                if isinstance(msg, str) and msg.strip():
+                    data_test_html = msg
+                    break
 
         # --------------------------------
         # 2) Puntuaciones (tu función)
@@ -651,7 +683,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             div="",
             script_f="",
             div_f="",
-            data_test=None,
+            data_test=data_test_html,
             # --- moderno ---
             resource_id=resource_id,
             plugin_name=plugin_name,
@@ -667,6 +699,34 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     @app.route("/en/not-found", endpoint="not-found_en")
     def not_found():
         return render_template("not-found.html")
+
+
+    @app.route("/request-email", methods=["POST"], endpoint="request_email")
+    def request_email():
+        form = EmailRequestForm()
+        if form.validate_on_submit():
+            log_dir = os.path.join(os.path.dirname(__file__), "data")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "email_requests.log")
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(
+                    f"{datetime.utcnow().isoformat()}Z\t{form.item_id.data}\t{form.plugin.data}\t{form.email.data}\t{(form.notes.data or '').replace(chr(10), ' ')}\n"
+                )
+            return render_template(
+                "timeout.html",
+                form=form,
+                item_id=form.item_id.data,
+                plugin=form.plugin.data,
+                submitted=True,
+            )
+
+        return render_template(
+            "timeout.html",
+            form=form,
+            item_id=form.item_id.data,
+            plugin=form.plugin.data,
+            submitted=False,
+        )
 
 
     @app.route("/es/faq", endpoint="faq_es")

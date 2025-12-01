@@ -1,0 +1,42 @@
+{% extends 'base_modern.html' %}
+
+{% block body %}
+<div class="container my-5" style="max-width:720px;">
+  <div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+      <h1 class="h4 mb-3">{{ _('The evaluation is taking longer than expected') }}</h1>
+      <p class="text-muted">{{ _('You can wait a bit more or leave us an email to send you the results as soon as they are ready.') }}</p>
+
+      {% if submitted %}
+        <div class="alert alert-success" role="alert">
+          {{ _('Request received. We will send the evaluation to %(email)s', email=form.email.data) }}
+        </div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('request_email') }}" class="mt-3">
+        {{ form.hidden_tag() }}
+        {{ form.item_id() }}
+        {{ form.plugin() }}
+        <div class="mb-3">
+          <label class="form-label" for="email">{{ _('Email') }}</label>
+          {{ form.email(class_='form-control', placeholder='you@example.com') }}
+          {% if form.email.errors %}
+            <div class="text-danger small">{{ form.email.errors[0] }}</div>
+          {% endif %}
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="notes">{{ _('Notes (optional)') }}</label>
+          {{ form.notes(class_='form-control', rows=3) }}
+        </div>
+        <button type="submit" class="btn btn-primary">{{ _('Send results by email') }}</button>
+        <a href="{{ url_for('home_' + g.language) }}" class="btn btn-outline-secondary ms-2">{{ _('Back to start') }}</a>
+      </form>
+
+      <div class="mt-4 small text-muted">
+        <div><strong>{{ _('Identifier') }}:</strong> {{ item_id }}</div>
+        <div><strong>{{ _('Plugin') }}:</strong> {{ plugin }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
