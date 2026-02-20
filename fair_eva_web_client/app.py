@@ -11,6 +11,7 @@ environment variables or command‑line flags.
 from __future__ import annotations
 import configparser
 from datetime import datetime
+from html import unescape
 from io import BytesIO
 import importlib
 import json
@@ -443,6 +444,80 @@ def _draw_wrapped_text(c, text: str, x: float, y: float, max_width: float, line_
     return y
 
 
+def _html_to_text(value: str) -> str:
+    """Convert simple HTML content into readable plain text."""
+    text = value or ""
+    # Block/line tags to line breaks
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*p\s*>", "\n\n", text)
+    text = re.sub(r"(?i)</\s*li\s*>", "\n", text)
+    text = re.sub(r"(?i)<\s*li[^>]*>", "- ", text)
+    # Remove remaining tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # Decode entities and normalize whitespace/newlines
+    text = unescape(text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _draw_wrapped_text_paginated(
+    c,
+    text: str,
+    x: float,
+    y: float,
+    max_width: float,
+    line_h: float,
+    page_h: float,
+    margin: float,
+    font_name: str = "Helvetica",
+    font_size: float = 9.0,
+):
+    """Draw wrapped text across pages and return final y."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    c.setFont(font_name, font_size)
+    paragraphs = (text or "").split("\n")
+    for p_idx, paragraph in enumerate(paragraphs):
+        words = paragraph.split()
+        if not words:
+            y -= line_h
+            if y < (margin + line_h):
+                c.showPage()
+                c.setFont(font_name, font_size)
+                y = page_h - margin
+            continue
+
+        line_words: List[str] = []
+        for word in words:
+            candidate = (" ".join(line_words + [word])).strip()
+            if stringWidth(candidate, font_name, font_size) <= max_width:
+                line_words.append(word)
+                continue
+
+            c.drawString(x, y, " ".join(line_words))
+            y -= line_h
+            if y < (margin + line_h):
+                c.showPage()
+                c.setFont(font_name, font_size)
+                y = page_h - margin
+            line_words = [word]
+
+        if line_words:
+            c.drawString(x, y, " ".join(line_words))
+            y -= line_h
+            if y < (margin + line_h):
+                c.showPage()
+                c.setFont(font_name, font_size)
+                y = page_h - margin
+
+        # Extra space between paragraphs
+        if p_idx < len(paragraphs) - 1:
+            y -= (line_h * 0.4)
+
+    return y
+
+
 def _wrap_text_lines(text: str, max_width: float, font_name: str, font_size: float) -> List[str]:
     """Wrap text into as many lines as needed without truncation."""
     from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -569,7 +644,7 @@ def generate_report_pdf(report_data: Dict[str, Any]) -> bytes:
             if isinstance(logs, str):
                 logs = [logs]
             logs_text = " | ".join(str(m) for m in logs[:2]) if logs else "No logs."
-            tip_text = str(test.get("tips") or test.get("recommendation") or "").strip()
+            tip_text = _html_to_text(str(test.get("tips") or test.get("recommendation") or "").strip())
             if tip_text and tip_text == test_id + ".tips":
                 tip_text = ""
 
@@ -618,22 +693,30 @@ def generate_report_pdf(report_data: Dict[str, Any]) -> bytes:
             c.drawRightString(page_w - margin - 8, y - 6, f"{score:.2f} / {max_score:.2f} ({pct:.1f}%)")
 
             # Evidence block
-            y = _draw_wrapped_text(
+            y = _draw_wrapped_text_paginated(
                 c,
                 f"Evidence: {logs_text}",
                 margin + 12,
                 y - (18 + extra_title_height),
                 page_w - (2 * margin) - 20,
                 10.5,
+                page_h=page_h,
+                margin=margin,
+                font_name="Helvetica",
+                font_size=9.0,
             )
             if tip_text:
-                y = _draw_wrapped_text(
+                y = _draw_wrapped_text_paginated(
                     c,
                     f"Tip: {tip_text}",
                     margin + 12,
                     y - 1,
                     page_w - (2 * margin) - 20,
                     10.5,
+                    page_h=page_h,
+                    margin=margin,
+                    font_name="Helvetica",
+                    font_size=9.0,
                 )
             y -= 10
 
