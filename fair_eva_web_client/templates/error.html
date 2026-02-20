@@ -1,11 +1,15 @@
 {% extends 'base_modern.html' %}
 
-{% block content %}
+{% block body %}
 <div class="container">
-  <h2>Error</h2>
-  <div class="alert alert-danger">
-    {{ error }}
+  <h2 class="mb-3">Request Error</h2>
+  <div class="alert alert-danger" role="alert">
+    {{ error or 'An unexpected error occurred while contacting the FAIR EVA API.' }}
   </div>
-  <p><a href="{{ url_for('index') }}" class="btn btn-secondary">Back to home</a></p>
+  <p>
+    <a href="{{ url_for('home_' + (g.language|default('en'))) }}" class="btn btn-secondary">
+      Back to home
+    </a>
+  </p>
 </div>
 {% endblock %}

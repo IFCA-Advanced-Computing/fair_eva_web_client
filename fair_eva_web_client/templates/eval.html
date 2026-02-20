@@ -66,11 +66,14 @@
       const max   = Number(it.max_score || 0) || 1;
       const pct   = Math.max(0, Math.min(100, Math.round((score*100)/max)));
       const col   = colorForPct(pct);
+      const visualPct = (pct === 0) ? 100 : pct;
+      const indicatorLabel = String(it.display_name || it.title || it.id || '').trim();
       return {
-        label: `${it.id || ''} ${it.title || ''}`.trim(),
-        data: [pct, 100 - pct],
+        label: indicatorLabel,
+        data: [visualPct, 100 - visualPct],
         backgroundColor: [col, 'rgba(0,0,0,0.06)'],
         borderWidth: 0,
+        fairPct: pct,
         rotation: -90,          // empieza arriba
         circumference: 360,     // círculo completo
         weight: 1               // grosor uniforme
@@ -104,7 +107,7 @@
                 title: (items) => items[0]?.dataset?.label || '',
                 label: (ctx) => {
                   const ds  = ctx.dataset;
-                  const val = Array.isArray(ds.data) ? ds.data[0] : ctx.parsed;
+                  const fairPct = Number(ds.fairPct || 0);
                   const groupKey = (ctx.chart?.canvas?.id?.replace('ring-','') || '');
                   const fullName = groupKey.charAt(0).toUpperCase() + groupKey.slice(1);
                   const items = indicatorsByArea[fullName] || [];
@@ -112,7 +115,7 @@
                   const score = Number(it.score || 0), max = Number(it.max_score || 0) || 1;
                   return [
                     `Score: ${score}/${max}`,
-                    `Porcentaje: ${Math.round(val)}%`
+                    `Porcentaje: ${Math.round(fairPct)}%`
                   ];
                 }
               }
@@ -234,6 +237,9 @@
     <div class="d-flex gap-2">
       {% if download_url %}
         <a class="btn btn-outline-secondary" href="{{ download_url }}" download>{{ _('Download JSON') }}</a>
+      {% endif %}
+      {% if pdf_url %}
+        <a class="btn btn-outline-dark" href="{{ pdf_url }}">{{ _('Download PDF report') }}</a>
       {% endif %}
       <a class="btn btn-primary" href="{{ url_for('home_' + g.language) }}">{{ _('New assessment') }}</a>
     </div>
@@ -486,4 +492,3 @@
     </div>
 </div>
 {% endblock %}
-

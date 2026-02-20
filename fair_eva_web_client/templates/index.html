@@ -22,7 +22,14 @@
             </div>
             <div class="mt-3">
               <label for="plugin" class="form-label">{{ _('Plugin') }}</label>
-              <div class="form-text">{{ _('Choose an evaluation plugin (only active plugins are listed).') }}</div>
+              <div class="form-text">
+                {{ _('Choose an evaluation plugin (only active plugins are listed).') }}
+                {% if plugins_source == 'api' %}
+                  {{ _('Loaded from API.') }}
+                {% else %}
+                  {{ _('Using local fallback list.') }}
+                {% endif %}
+              </div>
               {{ form.plugin(class="form-select", id="plugin") }}
             </div>
 

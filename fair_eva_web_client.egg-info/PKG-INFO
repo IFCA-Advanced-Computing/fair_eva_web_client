@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: fair-eva-web-client
+Version: 0.1.0
+Summary: A minimal web client for the FAIR EVA evaluator
+Author: FAIR EVA Team
+Classifier: Programming Language :: Python :: 3
+Classifier: Framework :: Flask
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: Flask>=2.2
+Requires-Dist: requests>=2.0
+Requires-Dist: Babel
+Requires-Dist: flask-babel
+Requires-Dist: flask-wtf
+Requires-Dist: reportlab>=4.0
+
 # FAIR_eva_web_client
 
 This repository contains a lightweight web interface for the

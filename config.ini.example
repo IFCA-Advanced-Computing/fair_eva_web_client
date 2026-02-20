@@ -1,0 +1,29 @@
+[fair_eva]
+# FAIR EVA API base host (without trailing slash)
+api_url = http://localhost
+
+# FAIR EVA API port
+api_port = 9090
+
+# Evaluation endpoint path (app builds: {api_url}:{api_port}{api_eval_path})
+api_eval_path = /v1.0/rda/rda_all
+
+# Optional plugin endpoint path or full URL.
+# Leave empty to enable automatic discovery.
+api_plugins_path =
+
+# Optional local plugin catalog file (JSON list with id/label).
+# Example includes:
+# - oai_pmh => OAI-PMH
+# - digital_csic => DIGITAL.CSIC
+plugins_file = fair_eva_web_client/data/plugins_example.json
+reports_dir = /tmp/fair_eva_web_client_reports
+
+# Optional UI settings
+title = FAIR EVA
+logo_url = https://digital.csic.es
+logo_image = logo_fair_eosc.png
+
+# Development mode settings
+dev_mode = false
+sample_file = fair_eva_web_client/data/salida_new.json

@@ -1,0 +1,6 @@
+Flask>=2.2
+requests>=2.0
+Babel
+flask-babel
+flask-wtf
+reportlab>=4.0
