@@ -1029,7 +1029,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         break
             else:
                 payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
-                resp = requests.post(endpoint, json=payload, timeout=30)
+                resp = requests.post(endpoint, json=payload, timeout=90)
                 resp.raise_for_status()
                 resp_json = resp.json()
                 raw_response = resp_json if isinstance(resp_json, dict) else {}
