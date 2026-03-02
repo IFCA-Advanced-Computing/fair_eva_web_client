@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from flask import (
     Flask,
     Response,
+    current_app,
     g,
     make_response,
     redirect,
@@ -38,6 +39,7 @@ from flask import (
 )
 from flask_babel import Babel, gettext
 from flask_babel import lazy_gettext as _l
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from flask_wtf import FlaskForm
 from wtforms import StringField, SelectField, SubmitField
@@ -76,7 +78,8 @@ class Settings:
     """
 
     api_url: str = os.getenv("FAIR_EVA_API_URL", "http://localhost")
-    api_port: int = int(os.getenv("FAIR_EVA_API_PORT", "9090"))
+    api_port: int = int(os.getenv("FAIR_EVA_API_PORT", "8080"))
+    api_timeout: int = int(os.getenv("FAIR_EVA_API_TIMEOUT", "90"))
     title: str = os.getenv("FAIR_EVA_TITLE", "FAIR EVA")
     logo_url: str = os.getenv("FAIR_EVA_LOGO_URL", "https://digital.csic.es")
     logo_image: str = os.getenv("FAIR_EVA_LOGO_IMAGE", "logo_fair_eosc.png")
@@ -102,6 +105,7 @@ def apply_ini_overrides(cfg: Settings, config_path: str) -> None:
     if not config_path or not os.path.isfile(config_path):
         return
 
+    print(config_path)
     parser = configparser.ConfigParser()
     parser.read(config_path, encoding="utf-8")
 
@@ -117,6 +121,8 @@ def apply_ini_overrides(cfg: Settings, config_path: str) -> None:
         cfg.api_url = section.get("api_url", cfg.api_url)
     if section.get("api_port"):
         cfg.api_port = int(section.get("api_port", cfg.api_port))
+    if section.get("api_timeout"):
+        cfg.api_timeout = int(section.get("api_timeout", cfg.api_timeout))
     if section.get("api_eval_path"):
         cfg.api_eval_path = section.get("api_eval_path", cfg.api_eval_path)
     if section.get("api_plugins_path") is not None:
@@ -253,13 +259,8 @@ def load_available_plugins(config_path: Optional[str] = None) -> List[Tuple[str,
     return []
 
 
-def build_default_eval_endpoint(cfg: Settings) -> str:
-    """Build the default FAIR EVA evaluation endpoint from settings."""
-    return f"{cfg.api_url.rstrip('/')}:{cfg.api_port}{cfg.api_eval_path}"
-
-
-def parse_plugins_payload(payload: Any) -> List[Tuple[str, str]]:
-    """Normalize plugin payloads into SelectField choices."""
+def _extract_plugin_entries(payload: Any) -> List[Dict[str, str]]:
+    """Normalize plugin payloads into entries with optional repository label."""
     candidates = payload
     if isinstance(payload, dict):
         for key in ("plugins", "data", "results", "items"):
@@ -269,10 +270,11 @@ def parse_plugins_payload(payload: Any) -> List[Tuple[str, str]]:
     if not isinstance(candidates, list):
         return []
 
-    parsed: List[Tuple[str, str]] = []
+    parsed: List[Dict[str, str]] = []
     for entry in candidates:
         plugin_id: Optional[str] = None
         label: Optional[str] = None
+        repository_label: Optional[str] = None
         if isinstance(entry, str):
             plugin_id = entry
             label = entry
@@ -285,12 +287,84 @@ def parse_plugins_payload(payload: Any) -> List[Tuple[str, str]]:
                 or entry.get("name")
                 or plugin_id
             )
+            repository_label = (
+                entry.get("repository_label")
+                or entry.get("repository_name")
+                or entry.get("translation_repository_label")
+            )
         elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
             plugin_id = str(entry[0])
             label = str(entry[1])
         if plugin_id:
-            parsed.append((str(plugin_id), str(label or plugin_id)))
+            parsed.append(
+                {
+                    "id": str(plugin_id),
+                    "label": str(label or plugin_id),
+                    "repository_label": str(repository_label or label or plugin_id),
+                }
+            )
     return parsed
+
+
+def plugin_choices_from_entries(entries: List[Dict[str, str]]) -> List[Tuple[str, str]]:
+    """Build SelectField choices from normalized plugin entries."""
+    return [(entry["id"], entry["label"]) for entry in entries if entry.get("id")]
+
+
+def plugin_metadata_from_entries(entries: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+    """Map plugin id to UI and translation metadata."""
+    metadata: Dict[str, Dict[str, str]] = {}
+    for entry in entries:
+        plugin_id = entry.get("id")
+        if not plugin_id:
+            continue
+        metadata[plugin_id] = {
+            "label": entry.get("label", plugin_id),
+            "repository_label": entry.get("repository_label", entry.get("label", plugin_id)),
+        }
+    return metadata
+
+
+def resolve_repository_label(plugin_id: str) -> Optional[str]:
+    """Return the repository label to inject in translated strings."""
+    if not plugin_id:
+        return None
+    metadata = current_app.config.get("PLUGIN_METADATA", {}) or {}
+    plugin_meta = metadata.get(plugin_id, {}) or {}
+    return (
+        plugin_meta.get("repository_label")
+        or plugin_meta.get("label")
+        or plugin_id
+    )
+
+
+def apply_translation_parameters(value: Any, repository_label: Optional[str] = None) -> Any:
+    """Replace translation placeholders with runtime values."""
+    if isinstance(value, str) and repository_label:
+        return value.replace("REPOSITORY", repository_label)
+    return value
+
+
+def translated_gettext(message: str, *args: Any, **kwargs: Any) -> str:
+    """Translate a message and apply runtime placeholder replacements."""
+    translated = gettext(message, *args, **kwargs)
+    return apply_translation_parameters(
+        translated,
+        repository_label=getattr(g, "repository_label", None),
+    )
+
+
+def build_default_eval_endpoint(cfg: Settings) -> str:
+    """Build the default FAIR EVA evaluation endpoint from settings."""
+    payload = ''
+    endpoint = f"{cfg.api_url.rstrip('/')}:8080{cfg.api_eval_path}"
+    print("FAIR EVA endpoint=%s payload=%s", endpoint, payload)
+    return endpoint
+
+
+def parse_plugins_payload(payload: Any) -> List[Tuple[str, str]]:
+    """Normalize plugin payloads into SelectField choices."""
+    return plugin_choices_from_entries(_extract_plugin_entries(payload))
 
 
 def plugin_endpoint_candidates(api_endpoint: str, plugins_endpoint: Optional[str] = None) -> List[str]:
@@ -330,7 +404,7 @@ def fetch_plugins_from_api(
     api_endpoint: str,
     timeout: int = 8,
     plugins_endpoint: Optional[str] = None,
-) -> List[Tuple[str, str]]:
+) -> List[Dict[str, str]]:
     """Try to fetch available plugins from FAIR EVA API."""
     for plugins_url in plugin_endpoint_candidates(api_endpoint, plugins_endpoint):
         for method in ("GET", "POST"):
@@ -341,7 +415,7 @@ def fetch_plugins_from_api(
                     response = requests.post(plugins_url, json={}, timeout=timeout)
                 if response.status_code >= 400:
                     continue
-                parsed = parse_plugins_payload(response.json())
+                parsed = _extract_plugin_entries(response.json())
                 if parsed:
                     return parsed
             except Exception:
@@ -834,6 +908,8 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         config_file = os.getenv("FAIR_EVA_CONFIG_FILE", os.path.join(os.getcwd(), "config.ini"))
         apply_ini_overrides(cfg, config_file)
     app = Flask(__name__, template_folder="templates", static_folder="static")
+     # Trust reverse-proxy headers (including URL prefix) for URL generation.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
     app.config.update(
     {
         "SECRET_KEY": "sdafasfwefq3egthyjtyhwef",
@@ -863,6 +939,9 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         g.babel = babel
         success_message = _l("Test")
         g.language = get_locale()
+        g.repository_label = resolve_repository_label(
+            (request.values.get("plugin") or "").strip()
+        )
 
 
     def get_locale():
@@ -936,13 +1015,35 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 else:
                     return redirect(url_for("not-found_" + g.language))
 
-    LOCAL_AVAILABLE_PLUGINS = load_available_plugins(cfg.plugins_file)
+    LOCAL_AVAILABLE_PLUGIN_ENTRIES = _extract_plugin_entries([])
+    if cfg.plugins_file:
+        try:
+            with open(cfg.plugins_file, "r", encoding="utf-8") as fh:
+                LOCAL_AVAILABLE_PLUGIN_ENTRIES = _extract_plugin_entries(json.load(fh))
+        except Exception:
+            LOCAL_AVAILABLE_PLUGIN_ENTRIES = []
+    LOCAL_AVAILABLE_PLUGINS = plugin_choices_from_entries(LOCAL_AVAILABLE_PLUGIN_ENTRIES)
+    HAS_CONFIGURED_PLUGIN_LIST = bool(LOCAL_AVAILABLE_PLUGINS)
     if not LOCAL_AVAILABLE_PLUGINS:
-        LOCAL_AVAILABLE_PLUGINS = [
-            ("signposting", "Signposting (Zenodo/CSIC)"),
-            ("oai_pmh", "OAI-PMH"),
-            ("ai4os", "AI4EOSC Plugin"),
+        LOCAL_AVAILABLE_PLUGIN_ENTRIES = [
+            {
+                "id": "signposting",
+                "label": "Signposting (Zenodo/CSIC)",
+                "repository_label": "Signposting (Zenodo/CSIC)",
+            },
+            {
+                "id": "oai_pmh",
+                "label": "OAI-PMH",
+                "repository_label": "OAI-PMH",
+            },
+            {
+                "id": "ai4os",
+                "label": "AI4EOSC Plugin",
+                "repository_label": "AI4EOSC Plugin",
+            },
         ]
+        LOCAL_AVAILABLE_PLUGINS = plugin_choices_from_entries(LOCAL_AVAILABLE_PLUGIN_ENTRIES)
+    app.config["PLUGIN_METADATA"] = plugin_metadata_from_entries(LOCAL_AVAILABLE_PLUGIN_ENTRIES)
     app.config.setdefault("SECRET_KEY", "dev-change-me")       # Necesario para CSRF de Flask-WTF
     app.config.setdefault("WTF_CSRF_ENABLED", True)
     app.config.setdefault("BABEL_DEFAULT_LOCALE", "en")
@@ -955,35 +1056,46 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         # @babel.localeselector
         # def get_locale():
         #     return request.accept_languages.best_match(["en", "es"])
-        app.jinja_env.globals["_"] = _
+        app.jinja_env.globals["_"] = translated_gettext
     except Exception:
         # Fallback por si no quieres Babel en dev
-        app.jinja_env.globals["_"] = lambda s: s
+        app.jinja_env.globals["_"] = lambda s, *args, **kwargs: s
 
     @app.route("/es", endpoint="home_es")
     @app.route("/en", endpoint="home_en")
     def index():
         form = IdentifierForm()
-        api_endpoint = build_default_eval_endpoint(cfg)
-
         plugin_choices = LOCAL_AVAILABLE_PLUGINS
         plugins_source = "local"
-        if not cfg.dev_mode:
+        plugins_notice = ""
+
+        # If plugins are already configured locally, skip API discovery.
+        if not cfg.dev_mode and not HAS_CONFIGURED_PLUGIN_LIST:
             api_plugins = fetch_plugins_from_api(
-                api_endpoint,
+                build_default_eval_endpoint(cfg),
                 plugins_endpoint=cfg.api_plugins_path,
             )
             if api_plugins:
-                plugin_choices = api_plugins
+                plugin_choices = plugin_choices_from_entries(api_plugins)
+                app.config["PLUGIN_METADATA"].update(plugin_metadata_from_entries(api_plugins))
                 plugins_source = "api"
+            else:
+                plugins_notice = (
+                    "Could not load plugins from API endpoint. "
+                    "Using local plugin list."
+                )
         form.plugin.choices = plugin_choices
 
         if form.validate_on_submit():
             item_id = form.item_id.data.strip()
             plugin = form.plugin.data
             return redirect(url_for(f"evaluator_{g.language}", item_id=item_id, plugin=plugin))
-
-        return render_template("index.html", form=form, plugins_source=plugins_source)
+        return render_template(
+            "index.html",
+            form=form,
+            plugins_source=plugins_source,
+            plugins_notice=plugins_notice,
+        )
 
     @app.route("/es/evaluator", endpoint="evaluator_es", methods=["GET", "POST"])
     @app.route("/en/evaluator", endpoint="evaluator_en", methods=["GET", "POST"])
@@ -991,11 +1103,12 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         app.config["BABEL_TRANSLATION_DIRECTORIES"] = "translations"
         babel.init_app(app, locale_selector=get_locale)
         """Perform an evaluation and render the results page (compatible legacy + modern UI)."""
-        # Acepta tanto GET como POST (request.values cubre ambos)
-        item_id = (request.args.get("item_id") or "").strip()
-        plugin = (request.args.get("plugin") or "").strip()
+        # Accept both query params (GET) and form body (POST from index form).
+        item_id = (request.values.get("item_id") or "").strip()
+        plugin = (request.values.get("plugin") or "").strip()
         repo = plugin
         oai_base = ""
+        g.repository_label = resolve_repository_label(plugin)
 
         if not item_id:
             return redirect(url_for("home_"+ g.language))
@@ -1029,7 +1142,11 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         break
             else:
                 payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
-                resp = requests.post(endpoint, json=payload, timeout=30)
+                print(endpoint)
+                endpoint = "http://localhost:8080/v1.0/rda/rda_all"
+                print(endpoint)
+
+                resp = requests.post(endpoint, json=payload, timeout=cfg.api_timeout)
                 resp.raise_for_status()
                 resp_json = resp.json()
                 raw_response = resp_json if isinstance(resp_json, dict) else {}
@@ -1131,9 +1248,9 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         priority = "important"
                     # logs/feedback pueden venir como string o lista
                     logs_raw = group[key]['msg']
-                    recommendation = gettext(f"{rid}.tips")
+                    recommendation = translated_gettext(f"{rid}.tips")
                     details = "details"
-                    display_name = gettext(rid)
+                    display_name = translated_gettext(rid)
                     items.append({
                         "id": rid,
                         "title": title,
@@ -1307,6 +1424,12 @@ def main() -> None:
     )
     parser.add_argument("--api-url", default=None, help="Base URL of the FAIR EVA API")
     parser.add_argument("--api-port", type=int, default=None, help="Port of the FAIR EVA API")
+    parser.add_argument(
+        "--api-timeout",
+        type=int,
+        default=None,
+        help="Timeout in seconds for FAIR EVA API requests",
+    )
     parser.add_argument("--title", default=None, help="Page title")
     parser.add_argument("--logo-url", default=None, help="URL to link the logo")
     parser.add_argument("--logo-image", default=None, help="Logo image file in static/img")
@@ -1321,6 +1444,8 @@ def main() -> None:
         cfg.api_url = args.api_url
     if args.api_port:
         cfg.api_port = args.api_port
+    if args.api_timeout is not None:
+        cfg.api_timeout = args.api_timeout
     if args.title:
         cfg.title = args.title
     if args.logo_url:

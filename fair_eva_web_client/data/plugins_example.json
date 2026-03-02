@@ -1,10 +1,7 @@
 [
   {
-    "id": "oai_pmh",
-    "label": "OAI-PMH"
-  },
-  {
     "id": "digital_csic",
-    "label": "DIGITAL.CSIC"
+    "label": "DIGITAL.CSIC",
+    "repository_label": "DIGITAL.CSIC"
   }
 ]

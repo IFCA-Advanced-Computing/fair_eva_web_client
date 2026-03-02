@@ -14,7 +14,7 @@
         <div class="card-body p-4">
           <h3 class="h5 mb-3">{{ _('Evaluate a digital object') }}</h3>
 
-          <form action="/evaluator" method="POST" class="needs-validation" novalidate>
+          <form action="{{ url_for('evaluator_' + g.language) }}" method="POST" class="needs-validation" novalidate>
             <div class="mb-3">
               <label for="item_id" class="form-label">{{ _('Handle PID, DOI or internal ID') }}</label>
               <div class="form-text">{{ _('Paste here the identifier you want to evaluate.') }}</div>
@@ -28,6 +28,9 @@
                   {{ _('Loaded from API.') }}
                 {% else %}
                   {{ _('Using local fallback list.') }}
+                {% endif %}
+                {% if plugins_notice %}
+                  {{ plugins_notice }}
                 {% endif %}
               </div>
               {{ form.plugin(class="form-select", id="plugin") }}

@@ -3,7 +3,10 @@
 api_url = http://localhost
 
 # FAIR EVA API port
-api_port = 9090
+api_port = 8080
+
+# FAIR EVA API timeout (seconds)
+api_timeout = 90
 
 # Evaluation endpoint path (app builds: {api_url}:{api_port}{api_eval_path})
 api_eval_path = /v1.0/rda/rda_all
