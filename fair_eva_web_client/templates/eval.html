@@ -17,6 +17,13 @@
     .muted{ opacity:.8; }
     .progress{ height:.6rem; }
     .sticky-cta{ position:sticky; bottom:1rem; z-index: 5; }
+    .data-test-card{ border: 1px solid rgba(15, 23, 42, 0.08); border-radius: var(--card-radius); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06); }
+    .data-test-html{ overflow-x: auto; }
+    .data-test-html table{ width: 100%; }
+    .data-test-html .card{ box-shadow: none !important; border: 0; margin: 0 !important; }
+    .data-test-html .card-header{ background: transparent; border-bottom: 1px solid rgba(15, 23, 42, 0.08); }
+    .data-test-html .table{ margin-bottom: 0; }
+    .data-test-text{ white-space: pre-line; }
   </style>
 
   <style>
@@ -205,7 +212,7 @@
     document.querySelectorAll('#areasAccordion .accordion-collapse').forEach(el=>{
       new bootstrap.Collapse(el, { show: true, toggle: false }).show();
     });
-    document.querySelectorAll('#areasAccordion [id$="-panel"]').forEach(el=>{
+    document.querySelectorAll('.detail-panel').forEach(el=>{
       new bootstrap.Collapse(el, { show: true, toggle: false }).show();
     });
   });
@@ -213,7 +220,7 @@
     document.querySelectorAll('#areasAccordion .accordion-collapse').forEach(el=>{
       new bootstrap.Collapse(el, { show: false, toggle: false }).hide();
     });
-    document.querySelectorAll('#areasAccordion [id$="-panel"]').forEach(el=>{
+    document.querySelectorAll('.detail-panel').forEach(el=>{
       new bootstrap.Collapse(el, { show: false, toggle: false }).hide();
     });
   });
@@ -386,11 +393,13 @@
                     {% set ipct   = ((100.0 * iscore) / denom) | round(1) %}
 
                     {# Color por porcentaje: verde/ámbar/rojo #}
-                    {% set status_color = '#e74c3c' %}
-                    {% if ipct >= 80 %}
-                      {% set status_color = '#2ecc71' %}
-                    {% elif ipct >= 40 %}
-                      {% set status_color = '#f1c40f' %}
+                    {% set status_color = it.color or '#e74c3c' %}
+                    {% if not it.color %}
+                      {% if ipct >= 80 %}
+                        {% set status_color = '#2ecc71' %}
+                      {% elif ipct >= 40 %}
+                        {% set status_color = '#f1c40f' %}
+                      {% endif %}
                     {% endif %}
 
                     <div class="list-group-item"
@@ -439,7 +448,7 @@
                         </div>
                       </div>
 
-                      <div id="{{ iid }}-panel" class="collapse mt-2">
+                      <div id="{{ iid }}-panel" class="collapse mt-2 detail-panel">
                         <div class="row g-3">
                           <div class="col-12 col-lg-7">
                             <div class="p-3 border rounded-3 h-100"
@@ -465,7 +474,7 @@
                                   <div class="text-muted small">{{ _('Logs / Evidences') }}</div>
                                   <ul class="small mb-0">
                                     {% for msg in it.logs %}
-                                      <li>{{ msg }}</li>
+                                      <li class="data-test-text">{{ msg }}</li>
                                     {% endfor %}
                                   </ul>
                                 </div>
@@ -491,4 +500,79 @@
     {% endfor %}
     </div>
 </div>
+
+{% if data_tests %}
+  <section class="mt-5">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div>
+        <h4 class="mb-1">{{ _('Data quality tests') }}</h4>
+        <div class="text-muted small">{{ _('Plugin-specific checks reported in the data_test block.') }}</div>
+      </div>
+      <span class="badge bg-light text-dark">{{ data_tests|length }}</span>
+    </div>
+
+    <div class="row g-3">
+      {% for it in data_tests %}
+        {% set data_id = 'data-test-' ~ loop.index %}
+        {% set iscore = (it.score or 0) | float %}
+        {% set imax   = (it.max_score or 0) | float %}
+        {% set denom  = imax if imax > 0 else 1 %}
+        {% set ipct   = ((100.0 * iscore) / denom) | round(1) %}
+        {% set status_color = it.color or '#e74c3c' %}
+        {% if not it.color %}
+          {% if ipct >= 80 %}
+            {% set status_color = '#2ecc71' %}
+          {% elif ipct >= 40 %}
+            {% set status_color = '#f1c40f' %}
+          {% endif %}
+        {% endif %}
+
+        <div class="col-12">
+          <div class="data-test-card overflow-hidden" style="border-left: 6px solid {{ status_color }};">
+            <div class="p-3 p-lg-4">
+              <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+                <div class="d-flex align-items-center gap-2">
+                  <span class="badge bg-light text-dark">{{ it.id }}</span>
+                  <span class="d-inline-block rounded-circle" style="width:.7rem;height:.7rem;background: {{ status_color }};"></span>
+                  {% if it.test_status %}
+                    <span class="badge rounded-pill text-bg-secondary">{{ it.test_status }}</span>
+                  {% endif %}
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                  <span class="score-badge">{{ _('Score') }}: {{ iscore|round(2) }} / {{ imax|round(2) }}</span>
+                  <div class="progress" style="width:160px; height:.55rem;">
+                    <div class="progress-bar"
+                         style="width: {{ ipct }}%; --bs-progress-bar-bg: {{ status_color }}; background-color: {{ status_color }};"></div>
+                  </div>
+                  <button class="btn btn-sm btn-outline-secondary"
+                          type="button"
+                          data-bs-toggle="collapse"
+                          data-bs-target="#{{ data_id }}-panel"
+                          aria-expanded="{{ 'true' if loop.first else 'false' }}"
+                          aria-controls="{{ data_id }}-panel">
+                    Ver detalle
+                  </button>
+                </div>
+              </div>
+
+              <div id="{{ data_id }}-panel" class="collapse{% if loop.first %} show{% endif %} mt-3 detail-panel">
+                {% if it.html_message %}
+                  <div class="data-test-html">{{ it.html_message | safe }}</div>
+                {% elif it.logs %}
+                  <div class="small data-test-text">
+                    {% for msg in it.logs %}
+                      <div {% if not loop.last %}class="mb-2"{% endif %}>{{ msg }}</div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div class="small text-muted">{{ _('No additional details available.') }}</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
 {% endblock %}

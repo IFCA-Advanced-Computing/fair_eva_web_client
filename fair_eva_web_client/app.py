@@ -38,6 +38,7 @@ from flask import (
 )
 from flask_babel import Babel, gettext
 from flask_babel import lazy_gettext as _l
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from flask_wtf import FlaskForm
 from wtforms import StringField, SelectField, SubmitField
@@ -834,6 +835,8 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         config_file = os.getenv("FAIR_EVA_CONFIG_FILE", os.path.join(os.getcwd(), "config.ini"))
         apply_ini_overrides(cfg, config_file)
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    # Trust reverse-proxy headers (including URL prefix) for URL generation.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
     app.config.update(
     {
         "SECRET_KEY": "sdafasfwefq3egthyjtyhwef",
@@ -1108,6 +1111,76 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                     total += 1
             return total or 100
 
+        def _looks_like_html(value: Any) -> bool:
+            """Return True when the value seems to contain HTML markup."""
+            if not isinstance(value, str):
+                return False
+            return bool(re.search(r"<[a-z][\s\S]*?>", value, re.IGNORECASE))
+
+        def _sanitize_html_fragment(value: str) -> str:
+            """Remove the most dangerous constructs from plugin-provided HTML."""
+            sanitized = value or ""
+            sanitized = re.sub(
+                r"(?is)<\s*(script|style|iframe|object|embed|link|meta|base|form)[^>]*>.*?<\s*/\s*\1\s*>",
+                "",
+                sanitized,
+            )
+            sanitized = re.sub(
+                r"(?i)\s+on[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)",
+                "",
+                sanitized,
+            )
+            sanitized = re.sub(
+                r'(?i)\s+(href|src)\s*=\s*"\s*javascript:[^"]*"',
+                "",
+                sanitized,
+            )
+            sanitized = re.sub(
+                r"(?i)\s+(href|src)\s*=\s*'\s*javascript:[^']*'",
+                "",
+                sanitized,
+            )
+            sanitized = re.sub(
+                r"(?i)\s+(href|src)\s*=\s*javascript:[^\s>]+",
+                "",
+                sanitized,
+            )
+            sanitized = re.sub(r"(?i)javascript:", "", sanitized)
+            return sanitized.strip()
+
+        def _normalize_messages(raw_value: Any, *, allow_html: bool = False) -> Tuple[List[str], Optional[str]]:
+            """Normalize mixed API message payloads into plain-text lines and optional HTML."""
+            html_message: Optional[str] = None
+            lines: List[str] = []
+
+            if isinstance(raw_value, list):
+                for entry in raw_value:
+                    if isinstance(entry, dict):
+                        message = entry.get("message")
+                        if message not in (None, ""):
+                            lines.append(str(message))
+                    elif entry not in (None, ""):
+                        lines.append(str(entry))
+            elif raw_value not in (None, ""):
+                text = str(raw_value).strip()
+                if text:
+                    if allow_html and _looks_like_html(text):
+                        html_message = _sanitize_html_fragment(text)
+                    else:
+                        lines.append(text)
+
+            return lines, html_message
+
+        def _sort_test_items(items: Dict[str, Any]) -> List[Tuple[str, Any]]:
+            """Sort entries like rda_01/data_01 using their numeric suffix when available."""
+            def _sort_key(item: Tuple[str, Any]) -> Tuple[int, str]:
+                key = str(item[0])
+                match = re.search(r"_(\d+)$", key)
+                number = int(match.group(1)) if match else sys.maxsize
+                return number, key
+
+            return sorted((items or {}).items(), key=_sort_key)
+
         def _tests_list(group: Dict[str, Any]) -> List[Dict[str, Any]]:
             """
             Normaliza los tests/indicadores para el acordeón moderno.
@@ -1129,8 +1202,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         priority = "essential" #TODO
                     elif group[key]['score']['weight'] > 10:
                         priority = "important"
-                    # logs/feedback pueden venir como string o lista
-                    logs_raw = group[key]['msg']
+                    logs, html_message = _normalize_messages(group[key].get("msg"))
                     recommendation = gettext(f"{rid}.tips")
                     details = "details"
                     display_name = gettext(rid)
@@ -1142,11 +1214,42 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         "score": score,
                         "max_score": max_s,
                         "priority": priority,
-                        "logs": logs_raw,
+                        "logs": logs,
+                        "html_message": html_message,
                         "recommendation": recommendation,
                         "tips": recommendation,
                         "details": details,
+                        "color": group[key].get("color"),
+                        "test_status": group[key].get("test_status", ""),
                     })
+            return items
+
+        def _data_tests_list(data_tests: Dict[str, Any]) -> List[Dict[str, Any]]:
+            """Normalize plugin-specific data tests for rendering."""
+            items: List[Dict[str, Any]] = []
+            for key, test in _sort_test_items(data_tests):
+                if not isinstance(test, dict):
+                    continue
+                test_id = str(test.get("name") or key)
+                score = float(test.get("points", 0) or 0)
+                max_score = float(test.get("score", {}).get("total", 100) or 100)
+                logs, html_message = _normalize_messages(test.get("msg"), allow_html=True)
+                items.append({
+                    "id": test_id,
+                    "title": test_id,
+                    "display_name": test_id.replace("_", " ").title(),
+                    "description": test_id,
+                    "score": score,
+                    "max_score": max_score,
+                    "priority": "",
+                    "logs": logs,
+                    "html_message": html_message,
+                    "recommendation": "",
+                    "tips": "",
+                    "details": "",
+                    "color": test.get("color"),
+                    "test_status": test.get("test_status", ""),
+                })
             return items
 
         # Mapea a nombres con mayúscula para el gráfico/tarjetas
@@ -1154,6 +1257,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         p_acc  = principles.get("accessible", {})
         p_int  = principles.get("interoperable", {})
         p_reu  = principles.get("reusable", {})
+        data_tests = _data_tests_list(result_data.get("data_test", {}) or {})
 
         summary_by_area = {
             "Findable": {
@@ -1195,6 +1299,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             "raw_response": raw_response,
             "summary_by_area": summary_by_area,
             "indicators_by_area": indicators_by_area,
+            "data_tests": data_tests,
         }
         report_id = uuid.uuid4().hex
         report_payload["metadata"]["report_id"] = report_id
@@ -1220,13 +1325,14 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             div="",
             script_f="",
             div_f="",
-            data_test=None,
+            data_test=data_tests,
             # --- moderno ---
             resource_id=resource_id,
             plugin_name=plugin_name,
             now=datetime.utcnow().isoformat(timespec="seconds") + "Z",
             summary_by_area=summary_by_area,
             indicators_by_area=indicators_by_area,
+            data_tests=data_tests,
             chart_kind="radar",
             download_url=download_url,
             pdf_url=pdf_url,

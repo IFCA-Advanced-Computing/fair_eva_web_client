@@ -4,6 +4,10 @@
     "label": "OAI-PMH"
   },
   {
+    "id": "gbif",
+    "label": "GBIF"
+  },
+  {
     "id": "digital_csic",
     "label": "DIGITAL.CSIC"
   }
