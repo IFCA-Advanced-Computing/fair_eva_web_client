@@ -17,6 +17,30 @@
     .muted{ opacity:.8; }
     .progress{ height:.6rem; }
     .sticky-cta{ position:sticky; bottom:1rem; z-index: 5; }
+    .details-expand{ background:#f8f9fa; }
+    .details-content{
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .details-label{
+      cursor: pointer;
+      display: inline-block;
+      font-size: .85rem;
+      color: var(--bs-primary, #0d6efd);
+      margin-top: .35rem;
+    }
+    .details-less{ display:none; }
+    .details-toggle:checked ~ .details-content{
+      display: block;
+      overflow: visible;
+    }
+    .details-toggle:checked ~ .details-label .details-more{ display:none; }
+    .details-toggle:checked ~ .details-label .details-less{ display:inline; }
   </style>
 
   <style>
@@ -451,7 +475,14 @@
                               {% if it.details %}
                                 <div class="mb-2">
                                   <div class="text-muted small">{{ _('Details') }}</div>
-                                  <pre class="mb-0 small bg-light p-2 rounded-2">{{ _("%s.technical" % it.id) | tojson(indent=2) }}</pre>
+                                  <div class="details-expand small p-2 rounded-2">
+                                    <input type="checkbox" id="{{ iid }}-details-toggle" class="details-toggle" hidden>
+                                    <div class="details-content">{{ _("%s.technical" % it.id) }}</div>
+                                    <label for="{{ iid }}-details-toggle" class="details-label">
+                                      <span class="details-more">Ver más</span>
+                                      <span class="details-less">Ver menos</span>
+                                    </label>
+                                  </div>
                                 </div>
                               {% endif %}
                             </div>

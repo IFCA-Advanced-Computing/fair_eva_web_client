@@ -984,9 +984,13 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     @app.route("/", defaults={"path": ""}, methods=["GET", "POST"])
     @app.route("/<path:path>", methods=["GET", "POST"])
     def catch_all(path):
-        if path == "":
+        # Normalize trailing slashes so "/es/" behaves like "/es".
+        normalized_path = path.strip("/")
+        if normalized_path == "":
             return redirect(url_for("home_" + g.language))
-        subpaths = path.split("/")
+        subpaths = [segment for segment in normalized_path.split("/") if segment]
+        if not subpaths:
+            return redirect(url_for("home_" + g.language))
         if len(subpaths) > 2:
             subpaths.pop(0)
         if subpaths[0] in app.config["BABEL_LOCALES"]:
@@ -1012,8 +1016,7 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         return redirect(
                             url_for(subpaths[1] + "_" + g.language, **request.args)
                         )
-                else:
-                    return redirect(url_for("not-found_" + g.language))
+                return redirect(url_for("not-found_" + g.language))
 
     LOCAL_AVAILABLE_PLUGIN_ENTRIES = _extract_plugin_entries([])
     if cfg.plugins_file:
@@ -1142,10 +1145,6 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                         break
             else:
                 payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
-                print(endpoint)
-                endpoint = "http://localhost:8080/v1.0/rda/rda_all"
-                print(endpoint)
-
                 resp = requests.post(endpoint, json=payload, timeout=cfg.api_timeout)
                 resp.raise_for_status()
                 resp_json = resp.json()
