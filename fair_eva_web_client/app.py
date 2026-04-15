@@ -10,13 +10,14 @@ environment variables or command‑line flags.
 
 from __future__ import annotations
 import configparser
-from datetime import datetime
+from datetime import datetime, timezone
 from html import unescape
 from io import BytesIO
 import importlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import tempfile
 import uuid
@@ -48,6 +49,11 @@ from wtforms.validators import DataRequired
 
 
 import requests
+
+try:
+    import idutils
+except Exception:
+    idutils = None
 
 ###############################################################################
 # Configuration dataclass
@@ -98,6 +104,11 @@ class Settings:
         "FAIR_EVA_REPORTS_DIR",
         os.path.join(tempfile.gettempdir(), "fair_eva_web_client_reports"),
     )
+    store_evaluations: bool = os.getenv("FAIR_EVA_STORE_EVALUATIONS", "0") == "1"
+    evaluations_db_path: str = os.getenv(
+        "FAIR_EVA_EVALUATIONS_DB_PATH",
+        os.path.join(tempfile.gettempdir(), "fair_eva_web_client_evaluations.sqlite"),
+    )
 
 
 def apply_ini_overrides(cfg: Settings, config_path: str) -> None:
@@ -141,6 +152,16 @@ def apply_ini_overrides(cfg: Settings, config_path: str) -> None:
         cfg.sample_file = section.get("sample_file", cfg.sample_file)
     if section.get("dev_mode") is not None:
         cfg.dev_mode = section.getboolean("dev_mode", fallback=cfg.dev_mode)
+    if section.get("store_evaluations") is not None:
+        cfg.store_evaluations = section.getboolean(
+            "store_evaluations",
+            fallback=cfg.store_evaluations,
+        )
+    if section.get("evaluations_db_path"):
+        cfg.evaluations_db_path = section.get(
+            "evaluations_db_path",
+            cfg.evaluations_db_path,
+        )
 
 
 ###############################################################################
@@ -486,6 +507,250 @@ def load_evaluation_report(cfg: Settings, report_id: str) -> Optional[Dict[str, 
         return data if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+def _utc_now_iso() -> str:
+    """Return UTC timestamp without microseconds in ISO 8601 format."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    """Parse an ISO timestamp into an aware UTC datetime."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def format_evaluation_datetime(value: str, language: str) -> str:
+    """Format evaluation timestamp for UI display."""
+    parsed = _parse_iso_datetime(value)
+    if not parsed:
+        return value
+    if (language or "").startswith("es"):
+        return parsed.strftime("%d/%m/%Y %H:%M:%S UTC")
+    return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _ui_text(language: str, spanish: str, english: str) -> str:
+    """Return a language-aware short UI message."""
+    if (language or "").startswith("es"):
+        return spanish
+    return english
+
+
+def normalize_identifier(value: str) -> str:
+    """Normalize incoming persistent identifier using idutils when available."""
+    candidate = re.sub(r"\s+", "", (value or "").strip())
+    if not candidate:
+        return ""
+    if idutils is None:
+        return candidate.lower()
+
+    try:
+        schemes = list(idutils.detect_identifier_schemes(candidate) or [])
+    except Exception:
+        schemes = []
+
+    if not schemes:
+        return candidate.lower()
+
+    preferred = [
+        "doi",
+        "handle",
+        "urn",
+        "ark",
+        "url",
+        "orcid",
+        "pmid",
+        "arxiv",
+        "ads",
+        "ror",
+    ]
+    attempted: set[str] = set()
+    for scheme in preferred + sorted(schemes):
+        if scheme in attempted or scheme not in schemes:
+            continue
+        attempted.add(scheme)
+        try:
+            normalized = idutils.normalize_pid(candidate, scheme)
+            if normalized:
+                return str(normalized).strip().lower()
+        except Exception:
+            continue
+    return candidate.lower()
+
+
+def init_evaluations_db(cfg: Settings) -> None:
+    """Create SQLite database/table for stored evaluations when enabled."""
+    if not cfg.store_evaluations:
+        return
+
+    db_dir = os.path.dirname(cfg.evaluations_db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    with sqlite3.connect(cfg.evaluations_db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                normalized_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                plugin_name TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_evaluations_identifier_time
+            ON evaluations(normalized_id, evaluated_at DESC)
+            """
+        )
+        conn.commit()
+
+
+def save_evaluation_record(
+    cfg: Settings,
+    source_id: str,
+    plugin_name: str,
+    evaluated_at: str,
+    payload: Dict[str, Any],
+) -> Optional[int]:
+    """Persist a full evaluation payload in SQLite and return inserted row id."""
+    if not cfg.store_evaluations:
+        return None
+
+    normalized_id = normalize_identifier(source_id)
+    payload_json = json.dumps(payload, ensure_ascii=False)
+
+    with sqlite3.connect(cfg.evaluations_db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO evaluations (
+                normalized_id,
+                source_id,
+                plugin_name,
+                evaluated_at,
+                payload_json
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (normalized_id, source_id, plugin_name, evaluated_at, payload_json),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def list_stored_identifiers(cfg: Settings, language: str) -> List[Dict[str, Any]]:
+    """Return stored normalized identifiers plus summary metadata."""
+    if not cfg.store_evaluations:
+        return []
+
+    with sqlite3.connect(cfg.evaluations_db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                normalized_id,
+                COUNT(*) AS total,
+                MAX(evaluated_at) AS last_evaluated_at
+            FROM evaluations
+            GROUP BY normalized_id
+            ORDER BY last_evaluated_at DESC, normalized_id ASC
+            """
+        ).fetchall()
+
+    result: List[Dict[str, Any]] = []
+    for normalized_id, total, last_evaluated_at in rows:
+        result.append(
+            {
+                "normalized_id": str(normalized_id),
+                "total": int(total or 0),
+                "last_evaluated_at": str(last_evaluated_at or ""),
+                "last_display": format_evaluation_datetime(str(last_evaluated_at or ""), language),
+            }
+        )
+    return result
+
+
+def list_evaluation_runs(cfg: Settings, normalized_id: str, language: str) -> List[Dict[str, Any]]:
+    """Return all evaluation timestamps for a normalized identifier."""
+    if not cfg.store_evaluations or not normalized_id:
+        return []
+
+    with sqlite3.connect(cfg.evaluations_db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, source_id, plugin_name, evaluated_at
+            FROM evaluations
+            WHERE normalized_id = ?
+            ORDER BY evaluated_at DESC, id DESC
+            """,
+            (normalized_id,),
+        ).fetchall()
+
+    result: List[Dict[str, Any]] = []
+    for row_id, source_id, plugin_name, evaluated_at in rows:
+        result.append(
+            {
+                "id": int(row_id),
+                "source_id": str(source_id),
+                "plugin_name": str(plugin_name),
+                "evaluated_at": str(evaluated_at),
+                "evaluated_at_display": format_evaluation_datetime(str(evaluated_at), language),
+            }
+        )
+    return result
+
+
+def get_stored_evaluation(cfg: Settings, evaluation_id: int) -> Optional[Dict[str, Any]]:
+    """Return one stored evaluation and decoded payload."""
+    if not cfg.store_evaluations:
+        return None
+
+    with sqlite3.connect(cfg.evaluations_db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                id,
+                normalized_id,
+                source_id,
+                plugin_name,
+                evaluated_at,
+                payload_json
+            FROM evaluations
+            WHERE id = ?
+            """,
+            (evaluation_id,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    payload_json = str(row[5] or "{}")
+    try:
+        payload = json.loads(payload_json)
+    except Exception:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    return {
+        "id": int(row[0]),
+        "normalized_id": str(row[1]),
+        "source_id": str(row[2]),
+        "plugin_name": str(row[3]),
+        "evaluated_at": str(row[4]),
+        "payload": payload,
+    }
 
 
 def _pdf_color_for_pct(pct: float):
@@ -917,6 +1182,11 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         "DEBUG": True,
         "FLASK_DEBUG": 1,
         "PATHS": ["about_us", "evaluator", "export_pdf", "evaluations"],
+        "TITLE": cfg.title,
+        "LOGO_URL": cfg.logo_url,
+        "LOGO_IMAGE": cfg.logo_image,
+        "EVALUATIONS_ENABLED": cfg.store_evaluations,
+        "EVALUATIONS_DB_PATH": cfg.evaluations_db_path,
         "BABEL_DEFAULT_LOCALE": "es",
         "BABEL_LOCALES": [
             "en",
@@ -932,6 +1202,13 @@ def create_app(config: Optional[Settings] = None) -> Flask:
 )
     babel = Babel(app)
     app.secret_key = "super-secret"  # Necesario para CSRF en Flask-WTF
+
+    if cfg.store_evaluations:
+        try:
+            init_evaluations_db(cfg)
+        except Exception:
+            cfg.store_evaluations = False
+            app.config["EVALUATIONS_ENABLED"] = False
 
 
     @app.before_request
@@ -1300,11 +1577,12 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         # Nombre del plugin/identificador para cabecera del eval moderno
         plugin_name = plugin or "default"
         resource_id = item_id
+        evaluated_at = _utc_now_iso()
         report_payload: Dict[str, Any] = {
             "metadata": {
                 "resource_id": resource_id,
                 "plugin_name": plugin_name,
-                "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "generated_at": evaluated_at,
                 "language": g.language,
                 "endpoint": endpoint,
             },
@@ -1315,6 +1593,17 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         report_id = uuid.uuid4().hex
         report_payload["metadata"]["report_id"] = report_id
         save_evaluation_report(cfg, report_payload, report_id=report_id)
+        if cfg.store_evaluations:
+            try:
+                save_evaluation_record(
+                    cfg=cfg,
+                    source_id=resource_id,
+                    plugin_name=plugin_name,
+                    evaluated_at=evaluated_at,
+                    payload=report_payload,
+                )
+            except Exception:
+                pass
         download_url = url_for(f"download_json_{g.language}", report_id=report_id)
         pdf_url = url_for(f"export_pdf_{g.language}", report_id=report_id)
 
@@ -1339,13 +1628,15 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             data_test=None,
             # --- moderno ---
             resource_id=resource_id,
+            original_resource_id=None,
             plugin_name=plugin_name,
-            now=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            now=format_evaluation_datetime(evaluated_at, g.language),
             summary_by_area=summary_by_area,
             indicators_by_area=indicators_by_area,
             chart_kind="radar",
             download_url=download_url,
             pdf_url=pdf_url,
+            evaluation_source_label=None,
         )
 
     @app.route("/es/download-json/<report_id>", endpoint="download_json_es")
@@ -1375,6 +1666,118 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         response.headers["Content-Type"] = "application/pdf"
         response.headers["Content-Disposition"] = f'attachment; filename="fair_eva_report_{report_id}.pdf"'
         return response
+
+    @app.route("/es/evaluations", endpoint="evaluations_es")
+    @app.route("/en/evaluations", endpoint="evaluations_en")
+    def evaluations():
+        if not cfg.store_evaluations:
+            return redirect(url_for("home_" + g.language))
+
+        selected_identifier = (request.args.get("identifier") or "").strip()
+        selected_run_raw = (request.args.get("run_id") or "").strip()
+
+        identifiers = list_stored_identifiers(cfg, g.language)
+        available_identifiers = [entry["normalized_id"] for entry in identifiers]
+
+        if not selected_identifier and available_identifiers:
+            selected_identifier = available_identifiers[0]
+        if selected_identifier and selected_identifier not in available_identifiers:
+            selected_identifier = ""
+
+        runs = list_evaluation_runs(cfg, selected_identifier, g.language) if selected_identifier else []
+
+        selected_run_id: Optional[int] = None
+        if selected_run_raw.isdigit():
+            selected_run_id = int(selected_run_raw)
+        elif runs:
+            selected_run_id = runs[0]["id"]
+
+        run_ids = {entry["id"] for entry in runs}
+        if selected_run_id is not None and selected_run_id not in run_ids:
+            selected_run_id = None
+
+        evaluation_view_url = None
+        if selected_run_id is not None:
+            evaluation_view_url = url_for(
+                f"evaluation_record_{g.language}",
+                evaluation_id=selected_run_id,
+            )
+
+        return render_template(
+            "evaluations.html",
+            identifiers=identifiers,
+            runs=runs,
+            selected_identifier=selected_identifier,
+            selected_run_id=selected_run_id,
+            evaluation_view_url=evaluation_view_url,
+            storage_path=cfg.evaluations_db_path,
+            backups_notice=_ui_text(
+                g.language,
+                "La copia de seguridad de esta base de datos es responsabilidad del administrador del sistema.",
+                "Backing up this database is the system administrator's responsibility.",
+            ),
+        )
+
+    @app.route("/es/evaluations/view/<int:evaluation_id>", endpoint="evaluation_record_es")
+    @app.route("/en/evaluations/view/<int:evaluation_id>", endpoint="evaluation_record_en")
+    def evaluation_record(evaluation_id: int):
+        if not cfg.store_evaluations:
+            return redirect(url_for("home_" + g.language))
+
+        stored = get_stored_evaluation(cfg, evaluation_id)
+        if not stored:
+            return render_template("error.html", error="Requested evaluation was not found.")
+
+        payload = stored.get("payload", {}) or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        metadata_info = payload.get("metadata", {}) or {}
+        if not isinstance(metadata_info, dict):
+            metadata_info = {}
+        g.repository_label = resolve_repository_label(stored.get("plugin_name", ""))
+
+        report_id = metadata_info.get("report_id")
+        download_url = None
+        pdf_url = None
+        if isinstance(report_id, str) and _safe_report_id(report_id):
+            download_url = url_for(f"download_json_{g.language}", report_id=report_id)
+            pdf_url = url_for(f"export_pdf_{g.language}", report_id=report_id)
+
+        summary_by_area = payload.get("summary_by_area", {}) or {}
+        indicators_by_area = payload.get("indicators_by_area", {}) or {}
+        if not isinstance(summary_by_area, dict):
+            summary_by_area = {}
+        if not isinstance(indicators_by_area, dict):
+            indicators_by_area = {}
+
+        return render_template(
+            "eval.html",
+            item_id=stored.get("source_id", ""),
+            principles={},
+            aggregated={},
+            colours={},
+            result_points=0,
+            result_color="#6c757d",
+            script="",
+            div="",
+            script_f="",
+            div_f="",
+            data_test=None,
+            resource_id=stored.get("normalized_id", stored.get("source_id", "")),
+            original_resource_id=stored.get("source_id", ""),
+            plugin_name=stored.get("plugin_name", metadata_info.get("plugin_name", "default")),
+            now=format_evaluation_datetime(stored.get("evaluated_at", ""), g.language),
+            summary_by_area=summary_by_area,
+            indicators_by_area=indicators_by_area,
+            chart_kind="radar",
+            download_url=download_url,
+            pdf_url=pdf_url,
+            evaluation_source_label=_ui_text(
+                g.language,
+                "Evaluación recuperada de la base de datos local.",
+                "Evaluation loaded from the local database.",
+            ),
+        )
 
 
     @app.route("/es/not-found", endpoint="not-found_es")
@@ -1434,6 +1837,16 @@ def main() -> None:
     parser.add_argument("--logo-image", default=None, help="Logo image file in static/img")
     parser.add_argument("--dev", action="store_true", help="Enable development mode (load JSON file)")
     parser.add_argument("--sample-file", default=None, help="Path to sample JSON file for --dev")
+    parser.add_argument(
+        "--store-evaluations",
+        action="store_true",
+        help="Store evaluation payloads in a local SQLite database",
+    )
+    parser.add_argument(
+        "--evaluations-db-path",
+        default=None,
+        help="Path to the SQLite database for stored evaluations",
+    )
     args = parser.parse_args()
 
     # Build settings based on defaults and overrides
@@ -1455,5 +1868,9 @@ def main() -> None:
         cfg.dev_mode = True
     if args.sample_file:
         cfg.sample_file = args.sample_file
+    if args.store_evaluations:
+        cfg.store_evaluations = True
+    if args.evaluations_db_path:
+        cfg.evaluations_db_path = args.evaluations_db_path
     app = create_app(cfg)
     app.run(host=args.host, port=args.port, debug=cfg.dev_mode)

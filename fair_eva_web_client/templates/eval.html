@@ -252,8 +252,14 @@
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
     <div>
       <h1 class="mb-1">{{ _('FAIR Evaluation') }}</h1>
+      {% if evaluation_source_label %}
+        <div class="small text-muted mb-1">{{ evaluation_source_label }}</div>
+      {% endif %}
       <div class="text-muted">
         <span class="me-3"><strong>ID:</strong> {{ resource_id }}</span>
+        {% if original_resource_id and original_resource_id != resource_id %}
+          <span class="me-3"><strong>{{ 'ID original' if g.language.startswith('es') else 'Original ID' }}:</strong> {{ original_resource_id }}</span>
+        {% endif %}
         <span class="me-3"><strong>Plugin:</strong> {{ plugin_name }}</span>
         <span><strong>{{ _('Date') }}:</strong> {{ (now or '') }}</span>
       </div>

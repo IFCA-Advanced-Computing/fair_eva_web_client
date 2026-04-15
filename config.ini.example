@@ -22,6 +22,14 @@ api_plugins_path =
 plugins_file = fair_eva_web_client/data/plugins_example.json
 reports_dir = /tmp/fair_eva_web_client_reports
 
+# Optional: store executed evaluations in SQLite to enable the
+# "Evaluations" section in the UI.
+store_evaluations = false
+
+# SQLite file path for stored evaluations (JSON payload per run).
+# Backup/retention of this database is the system administrator's responsibility.
+evaluations_db_path = /tmp/fair_eva_web_client_evaluations.sqlite
+
 # Optional UI settings
 title = FAIR EVA
 logo_url = https://digital.csic.es

@@ -26,7 +26,9 @@
         <ul class="navbar-nav ms-auto align-items-lg-center">
           <li class="nav-item"><a class="nav-link" href="/">{{ _('Home') }}</a></li>
           <li class="nav-item"><a class="nav-link" href="/about_us">{{ _('About us') }}</a></li>
-          <li class="nav-item"><a class="nav-link" href="/evaluations">{{ _('Evaluations') }}</a></li>
+          {% if config.EVALUATIONS_ENABLED %}
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('evaluations_' + g.language) }}">{{ _('Evaluations') }}</a></li>
+          {% endif %}
           <li class="nav-item"><a class="nav-link" target="_blank" href="https://github.com/IFCA-Advanced-Computing/FAIR_eva">{{ _('GitHub') }}</a></li>
           <li class="nav-item dropdown">
             <a class="nav-link dropdown-toggle" href="#" id="lang" role="button" data-bs-toggle="dropdown" aria-expanded="false">

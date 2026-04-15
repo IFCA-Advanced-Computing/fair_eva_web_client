@@ -1,0 +1,79 @@
+{% extends 'base_modern.html' %}
+{% block body %}
+{% set is_es = g.language.startswith('es') %}
+<section class="container">
+  <div class="mb-4">
+    <h2 class="fw-semibold mb-2">{{ _('Evaluations') }}</h2>
+    <p class="text-muted mb-1">
+      {{ 'Selecciona un identificador normalizado y una fecha de ejecución para cargar un resultado almacenado.' if is_es else 'Select a normalized identifier and one execution timestamp to load a stored result.' }}
+    </p>
+    <p class="text-muted small mb-0">
+      {{ backups_notice }}
+    </p>
+  </div>
+
+  {% if identifiers %}
+    <div class="card shadow-sm mb-4">
+      <div class="card-body p-4">
+        <form method="GET" action="{{ url_for('evaluations_' + g.language) }}" class="row g-3 align-items-end">
+          <div class="col-12 col-lg-6">
+            <label for="identifier" class="form-label">{{ 'Identificador' if is_es else 'Identifier' }}</label>
+            <select class="form-select" id="identifier" name="identifier" onchange="this.form.submit()">
+              {% for entry in identifiers %}
+                <option value="{{ entry.normalized_id }}" {% if entry.normalized_id == selected_identifier %}selected{% endif %}>
+                  {{ entry.normalized_id }} ({{ entry.total }})
+                </option>
+              {% endfor %}
+            </select>
+            <div class="form-text">{{ 'Los IDs normalizados se generan con reglas según el esquema del identificador (DOI, Handle, etc.).' if is_es else 'Normalized IDs are generated using identifier scheme-aware rules (DOI, Handle, etc.).' }}</div>
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <label for="run_id" class="form-label">{{ 'Fecha y hora de ejecución' if is_es else 'Execution date and time' }}</label>
+            <select class="form-select" id="run_id" name="run_id">
+              {% for run in runs %}
+                <option value="{{ run.id }}" {% if run.id == selected_run_id %}selected{% endif %}>
+                  {{ run.evaluated_at_display }} | {{ run.plugin_name }}
+                </option>
+              {% endfor %}
+            </select>
+            <div class="form-text">{{ 'Ruta de base de datos' if is_es else 'Database path' }}: {{ storage_path }}</div>
+          </div>
+
+          <div class="col-12 d-flex gap-2">
+            <button type="submit" class="btn btn-primary">{{ 'Mostrar ejecución seleccionada' if is_es else 'Show selected execution' }}</button>
+            {% if evaluation_view_url %}
+              <a class="btn btn-outline-secondary" href="{{ evaluation_view_url }}">{{ 'Abrir informe completo' if is_es else 'Open full report' }}</a>
+            {% endif %}
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if runs %}
+      <div class="card border-0 bg-light">
+        <div class="card-body p-4">
+          <h3 class="h6 text-uppercase text-muted">{{ 'Ejecuciones del identificador seleccionado' if is_es else 'Executions for selected identifier' }}</h3>
+          <ul class="list-group list-group-flush mt-3">
+            {% for run in runs %}
+              <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">{{ run.evaluated_at_display }}</div>
+                  <div class="small text-muted">{{ run.plugin_name }} | {{ run.source_id }}</div>
+                </div>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('evaluation_record_' + g.language, evaluation_id=run.id) }}">
+                  {{ 'Ver' if is_es else 'View' }}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="alert alert-info">
+      {{ 'Todavía no hay evaluaciones guardadas. Ejecuta al menos una evaluación con el almacenamiento SQLite activo.' if is_es else 'No evaluations have been stored yet. Run at least one evaluation while SQLite storage is enabled.' }}
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

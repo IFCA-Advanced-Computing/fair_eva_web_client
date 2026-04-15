@@ -24,7 +24,8 @@ dependencies = [
     "Babel",
     "flask-babel",
     "flask-wtf",
-    "reportlab>=4.0"
+    "reportlab>=4.0",
+    "idutils>=1.1.14"
 ]
 
 [project.scripts]
