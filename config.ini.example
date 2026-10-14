@@ -1,4 +1,10 @@
 [fair_eva]
+# full: FAIR + plugin data tests; ica: execute only data_01
+# Set evaluation_mode = ica to enable ICA-only assessments.
+evaluation_mode = full
+api_ica_path = /v1.0/plugins/data_01
+# Includes the first catalogue download/index build.
+api_timeout = 900
 # FAIR EVA API base host (without trailing slash)
 api_url = http://localhost
 

@@ -126,3 +126,65 @@ project for details on those components.
 
 This project is released under the MIT License.  It reuses ideas from the
 FAIR EVA web interface but is not affiliated with the original maintainers.
+
+## ICA dashboard and ICA-only mode
+
+GBIF's `data_01` is shown as an ICA dashboard: an overall score, a weighted
+contribution bar, three dimension cards and expandable checks. Dimension
+percentages use their own maxima (taxonomic 45, geographic 35, temporal 20).
+Penalties are displayed explicitly and are not subtracted twice. Negative scores
+remain visible; only the drawn bar/ring lengths are limited to 0–100%.
+Catalogue release and update warnings are shown when provided by the plugin.
+The layout supports desktop/mobile and Spanish/English, and ICA itself does not
+require Chart.js or JavaScript for its expandable details.
+
+To execute **only** `data_01`, set the following in the web client's config file:
+
+```ini
+[fair_eva]
+evaluation_mode = ica
+api_ica_path = /v1.0/plugins/data_01
+api_timeout = 900
+```
+
+The default is `evaluation_mode = full`, which continues using `api_eval_path`
+(`/v1.0/rda/rda_all`). In `ica` mode the client makes one evaluation POST to
+`api_ica_path` with `id`, `repo`, `lang` and `url` (the published data-test schema
+requires `url`, while the API plugin loader uses `id` and `repo`). It does not
+execute all tests and then hide FAIR results. Plugin-list discovery on the home
+page can still make separate metadata requests.
+
+If the API or selected plugin does not support `data_01`, the error is displayed;
+there is no fallback to running the complete FAIR suite. `api_ica_path` may be an
+absolute URL or a path on the configured API host. The 900-second request timeout
+allows for the first catalogue download/import; align reverse-proxy/server
+request timeouts when deploying. Subsequent requests use the local catalogue.
+
+Also available:
+
+- Environment: `FAIR_EVA_EVALUATION_MODE`, `FAIR_EVA_API_ICA_PATH`, `FAIR_EVA_API_TIMEOUT`.
+- CLI: `--evaluation-mode full` or `--evaluation-mode ica`.
+- Precedence follows the existing client: environment defaults, then INI, then CLI.
+
+The updated GBIF plugin keeps the API's HTML `msg` contract and embeds precise
+ICA values in a versioned `data-ica` JSON attribute. The client converts these
+values into its own escaped view model. Older plugin tables remain supported,
+with unknown fields/version shown as unavailable. A failed evaluation is not
+shown as a zero-valued ICA gauge. JSON downloads retain the raw API response;
+PDF reports include the ICA breakdown and omit FAIR scores in ICA-only mode.
+No changes to the FAIR EVA API package are required. Install the updated GBIF
+plugin and this client to obtain structured scores and provenance; the legacy
+adapter is available while updating the deployments separately.
+
+Preview with synthetic, explicitly illustrative data (no evaluation API calls):
+
+```bash
+fair-eva-web-client --dev --evaluation-mode ica \
+  --sample-file fair_eva_web_client/data/ica_example.json
+```
+
+Regression tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```

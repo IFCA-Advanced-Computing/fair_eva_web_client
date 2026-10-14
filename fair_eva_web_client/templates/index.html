@@ -12,6 +12,9 @@
     <div class="col-12 col-lg-7">
       <div class="card h-100 shadow-sm">
         <div class="card-body p-4">
+          {% if config.EVALUATION_MODE == 'ica' %}
+          <div class="alert alert-info py-2 small" role="status">{{ 'Modo sólo ICA: se evaluará la calidad aparente de los datos mediante data_01.' if g.language.startswith('es') else 'ICA-only mode: data_01 will assess the apparent quality of the data.' }}</div>
+          {% endif %}
           <h3 class="h5 mb-3">{{ _('Evaluate a digital object') }}</h3>
 
           <form action="/evaluator" method="POST" class="needs-validation" novalidate>
@@ -47,7 +50,7 @@
             {% endif %}
 
             <div class="mt-4">
-              <button type="submit" class="btn btn-primary btn-lg px-4">{{ _('RUN TEST') }}</button>
+              <button type="submit" class="btn btn-primary btn-lg px-4">{{ ('EVALUAR ICA' if g.language.startswith('es') else 'ASSESS ICA') if config.EVALUATION_MODE == 'ica' else _('RUN TEST') }}</button>
 		        </div>
           </form>
         </div>
@@ -61,7 +64,7 @@
           <ul class="list-unstyled mt-3 small">
             <li class="mb-2">✅ {{ _('Paste a PID/DOI/handle or a internal ID.') }}</li>
             <li class="mb-2">⚙️ {{ _('Pick a plugin (when applicable) and optional repository/OAI-PMH.') }}</li>
-            <li class="mb-2">📊 {{ _('Get an overview chart per group (F, A, I, R) and expand tests for details.') }}</li>
+            <li class="mb-2">📊 {% if config.EVALUATION_MODE == 'ica' %}{{ 'Consulta el ICA y sus dimensiones taxonómica, geográfica y temporal.' if g.language.startswith('es') else 'Explore ICA and its taxonomic, geographic and temporal dimensions.' }}{% else %}{{ _('Get an overview chart per group (F, A, I, R) and expand tests for details.') }}{% endif %}</li>
             <li class="mb-2">💡 {{ _('Read technical feedback and tips to improve the score.') }}</li>
           </ul>
 

@@ -1,0 +1,12 @@
+{
+  "demo:ica": {
+    "name": "DATA_01",
+    "points": 84,
+    "score": {
+      "earned": 84,
+      "total": 100
+    },
+    "msg": "<div data-ica-version=\"1\" data-ica=\"{&quot;ICA&quot;: 84, &quot;Taxonomic&quot;: 38, &quot;Genus&quot;: 15, &quot;Species&quot;: 8, &quot;Kingdom&quot;: 3, &quot;Family&quot;: 3, &quot;Identifiers&quot;: 6, &quot;Hierarchy&quot;: 9, &quot;Geographic&quot;: 29, &quot;Coordinates&quot;: 20, &quot;Countries&quot;: 8, &quot;CoordinatesUncertainty&quot;: 5, &quot;IncorrectCoordinates&quot;: -4, &quot;Temporal&quot;: 17, &quot;Years&quot;: 11, &quot;Months&quot;: 6, &quot;Days&quot;: 1.5, &quot;IncorrectDates&quot;: -1.5, &quot;Class/Order&quot;: 3, &quot;Catalogue&quot;: {&quot;version&quot;: &quot;2026-08-20&quot;, &quot;edition&quot;: &quot;Base&quot;, &quot;source&quot;: &quot;https://download.checklistbank.org/col/monthly/2026-08-20_dwca.zip&quot;}}\">ICA summary</div>"
+  },
+  "evaluator_logs": []
+}

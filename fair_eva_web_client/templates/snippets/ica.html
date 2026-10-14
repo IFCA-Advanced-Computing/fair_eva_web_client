@@ -1,0 +1,78 @@
+{% set t = ica.text %}
+<section class="ica-dashboard mt-4 mb-5" aria-labelledby="ica-title">
+  <div class="ica-heading">
+    <div>
+      <span class="ica-eyebrow">DATA QUALITY <span aria-hidden="true">/</span> DATA_01</span>
+      <h2 id="ica-title">{{ t.ICA }}</h2>
+      <p class="text-muted mb-0">{{ t.subtitle }}</p>
+    </div>
+    <span class="ica-mode-tag">{{ 'Sólo ICA' if ica_only and g.language.startswith('es') else 'ICA only' if ica_only else 'ICA' }}</span>
+  </div>
+
+  <div class="ica-overview">
+    <div class="ica-total">
+      <div class="ica-gauge ica-status-{{ ica.status }}" style="--ica-fill: {{ ica.width }}%;"
+           role="img" aria-label="{{ t.total }}: {{ '%.2f'|format(ica.score) }} / 100">
+        <div><strong>{{ '%.2f'|format(ica.score) }}</strong><span>/ 100 {{ t.points }}</span></div>
+      </div>
+      <div class="ica-total-caption">{{ t.total }}</div>
+    </div>
+    <div class="ica-composition">
+      <h3 class="h6 mb-3">{{ t.contribution }}</h3>
+      <div class="ica-stack" role="img" aria-label="{% for d in ica.dimensions %}{{ d.label }}: {{ '%.2f'|format(d.score) }} / {{ d.maximum }}. {% endfor %}">
+        {% for d in ica.dimensions %}
+        <div class="ica-stack-slot" style="flex: {{ d.maximum }}; --dimension-color: {{ d.color }}">
+          <span style="width: {{ d.width }}%"></span>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="ica-stack-legend">
+        {% for d in ica.dimensions %}
+        <div><span class="ica-dot" style="background: {{ d.color }}"></span>{{ d.label }}<strong>{{ '%.2f'|format(d.score) }} <small>/ {{ d.maximum }}</small></strong></div>
+        {% endfor %}
+      </div>
+      <div class="ica-explanation">
+        <p>{{ t.method_text }}</p>
+        <span class="ica-penalty-summary{% if ica.penalties is not none and ica.penalties < 0 %} has-penalty{% endif %}">{{ t.penalties }} <strong>{% if ica.penalties is not none %}{{ '%.2f'|format(ica.penalties) }} {{ t.points }}{% else %}{{ t.unknown }}{% endif %}</strong></span>
+      </div>
+      {% if ica.score < 0 %}<p class="ica-negative-note">{{ t.negative }}</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="ica-dimensions">
+    {% for d in ica.dimensions %}
+    <article class="ica-dimension" style="--dimension-color: {{ d.color }}" aria-labelledby="ica-{{ d.key }}">
+      <div class="ica-dimension-body">
+        <div class="ica-dimension-heading"><span class="ica-dimension-number">0{{ loop.index }}</span><span class="ica-weight">{{ t.weight }} {{ d.maximum }} / 100</span></div>
+        <h3 id="ica-{{ d.key }}">{{ d.label }}</h3>
+        <div class="ica-dimension-score"><strong>{{ '%.1f'|format(d.percent) }}<small>%</small></strong><span>{{ t.coverage }}</span></div>
+        <div class="ica-meter ica-status-{{ d.status }}" role="progressbar" aria-label="{{ d.label }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ d.width }}" aria-valuetext="{{ '%.1f'|format(d.percent) }}%; {{ '%.2f'|format(d.score) }} / {{ d.maximum }} {{ t.points }}">
+          <span style="width: {{ d.width }}%"></span>
+        </div>
+        <div class="ica-dimension-footer"><span>{{ t.contribution }}</span><strong>{{ '%.2f'|format(d.score) }} / {{ d.maximum }}</strong></div>
+      </div>
+      <details class="ica-checks">
+        <summary>{{ t.checks }} <span>{{ d.checks|length }}</span></summary>
+        <ul>
+        {% for c in d.checks %}
+          <li class="{% if c.penalty %}ica-penalty-row{% endif %}">
+            <div><span>{{ c.label }}{% if c.penalty %}<small>{{ t.penalty }}</small>{% endif %}</span><strong>{% if c.score is not none %}{{ '%.2f'|format(c.score) }}{% else %}—{% endif %}<small> / {{ '−' if c.penalty else '' }}{{ c.maximum }}</small></strong></div>
+            <div class="ica-check-meter" aria-hidden="true"><span style="width: {{ c.width }}%"></span></div>
+          </li>
+        {% endfor %}
+        </ul>
+        {% if d.key == 'Taxonomic' and not ica.legacy %}<p class="ica-hierarchy-note">{{ t.hierarchy }}</p>{% endif %}
+      </details>
+    </article>
+    {% endfor %}
+  </div>
+  <div class="ica-scale" aria-label="{{ 'Escala de color' if g.language.startswith('es') else 'Colour scale' }}">
+    {% for key in ['good','partial','low'] %}<span class="ica-status-{{ key }}"><i aria-hidden="true"></i>{{ t[key] }}</span>{% endfor %}
+  </div>
+  <div class="ica-provenance">
+    <div><span class="ica-source-icon" aria-hidden="true">◎</span><div><strong>{{ t.source }}</strong><span>{% if ica.source.version %}Catalogue of Life · {{ ica.source.edition|default('Base') }} · {{ ica.source.version }}{% else %}{{ t.no_source }}{% endif %}</span></div></div>
+    <span>{{ t.legacy if ica.legacy else t.local }}</span>
+  </div>
+  {% if ica.source.warning %}<div class="alert alert-warning mt-3" role="status">{{ ica.source.warning }}</div>{% endif %}
+  <p class="ica-separate-note">{{ t.separate }}</p>
+</section>

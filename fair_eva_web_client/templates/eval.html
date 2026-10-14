@@ -1,5 +1,6 @@
 {% extends 'base_modern.html' %}
 {% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ica.css') }}">
   {# Tema de color: puedes sobreescribir en static/css/theme.css #}
   <style>
     :root{
@@ -36,6 +37,7 @@
 {% endblock %}
 
 {% block extra_js %}
+{% if not ica_only %}
 <!-- Chart.js (UMD) -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
@@ -134,7 +136,7 @@
   }
 
   // Render inicial cuando el DOM está listo (asegura que existan los canvas)
-  document.addEventListener('DOMContentLoaded', renderRings);
+  document.addEventListener('DOMContentLoaded', () => { if (window.Chart) renderRings(); });
 </script>
 
 <script>
@@ -165,7 +167,7 @@
   let chart;
   function renderFairChart(kind){
     const ctx = document.getElementById('fairChart');
-    if(!ctx) return;
+    if(!ctx || !window.Chart) return;
     if(chart){ chart.destroy(); }
     const pct = dataAreas.scores.map((v,i)=> {
       const max = dataAreas.maxs[i] || 1;
@@ -225,6 +227,7 @@
     });
   });
 </script>
+{% endif %}
 {% endblock %}
 
 {% block body %}
@@ -234,24 +237,29 @@
   <!-- Encabezado -->
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
     <div>
-      <h1 class="mb-1">{{ _('FAIR Evaluation') }}</h1>
+      <h1 class="mb-1">{{ ('Evaluación ICA' if g.language.startswith('es') else 'ICA assessment') if ica_only else _('FAIR Evaluation') }}</h1>
       <div class="text-muted">
         <span class="me-3"><strong>ID:</strong> {{ resource_id }}</span>
         <span class="me-3"><strong>Plugin:</strong> {{ plugin_name }}</span>
         <span><strong>{{ _('Date') }}:</strong> {{ (now or '') }}</span>
       </div>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex flex-wrap gap-2">
       {% if download_url %}
         <a class="btn btn-outline-secondary" href="{{ download_url }}" download>{{ _('Download JSON') }}</a>
       {% endif %}
       {% if pdf_url %}
-        <a class="btn btn-outline-dark" href="{{ pdf_url }}">{{ _('Download PDF report') }}</a>
+        <a class="btn btn-outline-dark" href="{{ pdf_url }}">{{ 'Descargar informe PDF' if g.language.startswith('es') else 'Download PDF report' }}</a>
       {% endif %}
-      <a class="btn btn-primary" href="{{ url_for('home_' + g.language) }}">{{ _('New assessment') }}</a>
+      <a class="btn btn-primary" href="{{ url_for('home_' + g.language) }}">{{ 'Nueva evaluación' if g.language.startswith('es') else 'New assessment' }}</a>
     </div>
   </div>
 
+  {% if ica %}{% include 'snippets/ica.html' %}{% endif %}
+  {% if ica_only and not ica %}
+  <div class="alert alert-info" role="status">{{ 'No se ha recibido un desglose ICA válido. Consulta el resultado de data_01 a continuación.' if g.language.startswith('es') else 'No valid ICA breakdown was returned. See the data_01 result below.' }}</div>
+  {% endif %}
+  {% if not ica_only %}
   <!-- Anillos concéntricos: cada anillo = un indicador -->
   <div class="mt-4">
     <div class="d-flex justify-content-between align-items-center mb-2">
@@ -501,6 +509,7 @@
     </div>
 </div>
 
+{% endif %}
 {% if data_tests %}
   <section class="mt-5">
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -575,4 +584,5 @@
     </div>
   </section>
 {% endif %}
+</div>
 {% endblock %}

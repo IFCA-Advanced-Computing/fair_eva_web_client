@@ -48,6 +48,8 @@ from wtforms.validators import DataRequired
 
 import requests
 
+from .ica import build_ica
+
 ###############################################################################
 # Configuration dataclass
 ###############################################################################
@@ -87,6 +89,9 @@ class Settings:
         os.path.join(os.path.dirname(__file__), "data", "salida_new.json"),
     )
     api_eval_path: str = os.getenv("FAIR_EVA_API_EVAL_PATH", "/v1.0/rda/rda_all")
+    evaluation_mode: str = os.getenv("FAIR_EVA_EVALUATION_MODE", "full")
+    api_ica_path: str = os.getenv("FAIR_EVA_API_ICA_PATH", "/v1.0/plugins/data_01")
+    api_timeout: int = int(os.getenv("FAIR_EVA_API_TIMEOUT", "900"))
     api_plugins_path: str = os.getenv("FAIR_EVA_API_PLUGINS_PATH", "")
     plugins_file: str = os.getenv(
         "FAIR_EVA_PLUGINS_FILE",
@@ -120,6 +125,12 @@ def apply_ini_overrides(cfg: Settings, config_path: str) -> None:
         cfg.api_port = int(section.get("api_port", cfg.api_port))
     if section.get("api_eval_path"):
         cfg.api_eval_path = section.get("api_eval_path", cfg.api_eval_path)
+    if section.get("evaluation_mode"):
+        cfg.evaluation_mode = section.get("evaluation_mode").strip().lower()
+    if section.get("api_ica_path"):
+        cfg.api_ica_path = section.get("api_ica_path")
+    if section.get("api_timeout"):
+        cfg.api_timeout = section.getint("api_timeout")
     if section.get("api_plugins_path") is not None:
         cfg.api_plugins_path = section.get("api_plugins_path", cfg.api_plugins_path)
     if section.get("plugins_file"):
@@ -254,9 +265,36 @@ def load_available_plugins(config_path: Optional[str] = None) -> List[Tuple[str,
     return []
 
 
+def normalize_evaluation_response(raw, item_id, mode="full"):
+    """Support direct tests, PID envelopes and full FAIR responses."""
+    if not isinstance(raw, dict):
+        return None
+    if "name" in raw or "data_test" in raw or "findable" in raw:
+        result = raw
+    else:
+        result = raw.get(item_id)
+        if not isinstance(result, dict):
+            result = next((value for key, value in raw.items()
+                           if key != "evaluator_logs" and isinstance(value, dict)), None)
+    if not isinstance(result, dict):
+        return None
+    if str(result.get("name", "")).lower() == "data_01":
+        return {"data_test": {"data_01": result}}
+    if mode == "ica":
+        tests = result.get("data_test", {})
+        test = next((value for key, value in tests.items() if key.lower() == "data_01"), None)
+        if test is None:
+            raise ValueError("The API did not return data_01. Check the ICA endpoint and plugin support.")
+        return {"data_test": {"data_01": test}}
+    return result
+
+
 def build_default_eval_endpoint(cfg: Settings) -> str:
     """Build the default FAIR EVA evaluation endpoint from settings."""
-    return f"{cfg.api_url.rstrip('/')}:{cfg.api_port}{cfg.api_eval_path}"
+    path = cfg.api_ica_path if cfg.evaluation_mode == "ica" else cfg.api_eval_path
+    if path.startswith(("http://", "https://")):
+        return path
+    return f"{cfg.api_url.rstrip('/')}:{cfg.api_port}{path}"
 
 
 def parse_plugins_payload(payload: Any) -> List[Tuple[str, str]]:
@@ -547,6 +585,30 @@ def _wrap_text_lines(text: str, max_width: float, font_name: str, font_size: flo
     return lines
 
 
+def _draw_ica_report(c, ica, y, page_w, page_h, margin):
+    """Keep ICA exports aligned with the displayed, already-weighted values."""
+    from reportlab.lib import colors
+    c.setFillColor(colors.black)
+    if not ica:
+        lines = ["ICA unavailable: no valid data_01 breakdown was returned."]
+    else:
+        lines = ["ICA - Apparent Quality Index", f"Overall score: {ica['score']:.2f} / 100", ""]
+        for dimension in ica["dimensions"]:
+            lines.append(f"{dimension['label']}: {dimension['score']:.2f} / {dimension['maximum']} ({dimension['percent']:.1f}%)")
+            for check in dimension["checks"]:
+                value = "N/A" if check["score"] is None else f"{check['score']:.2f}"
+                maximum = -check["maximum"] if check["penalty"] else check["maximum"]
+                lines.append(f"  {check['label']}: {value} / {maximum}")
+            lines.append("")
+        lines.append(ica["text"]["method_text"])
+        source = ica.get("source", {})
+        lines.append("Catalogue of Life: " + str(source.get("version", "not reported")))
+        if source.get("warning"):
+            lines.append(str(source["warning"]))
+    return _draw_wrapped_text_paginated(c, "\n".join(lines), margin, y,
+                                        page_w - 2 * margin, 13, page_h, margin)
+
+
 def generate_report_pdf(report_data: Dict[str, Any]) -> bytes:
     """Build an evaluation PDF report and return its bytes."""
     try:
@@ -579,6 +641,10 @@ def generate_report_pdf(report_data: Dict[str, Any]) -> bytes:
     c.drawRightString(page_w - margin, page_h - 76, f"Report ID: {metadata_info.get('report_id', '-')}")
 
     y = page_h - 118
+    if metadata_info.get("evaluation_mode") == "ica":
+        _draw_ica_report(c, report_data.get("ica"), y, page_w, page_h, margin)
+        c.save()
+        return out.getvalue()
 
     # Summary bars
     c.setFillColor(colors.black)
@@ -723,6 +789,9 @@ def generate_report_pdf(report_data: Dict[str, Any]) -> bytes:
 
         y -= 8
 
+    if report_data.get("ica"):
+        c.showPage()
+        _draw_ica_report(c, report_data["ica"], page_h - margin, page_w, page_h, margin)
     c.save()
     return out.getvalue()
 
@@ -834,6 +903,10 @@ def create_app(config: Optional[Settings] = None) -> Flask:
     if config is None:
         config_file = os.getenv("FAIR_EVA_CONFIG_FILE", os.path.join(os.getcwd(), "config.ini"))
         apply_ini_overrides(cfg, config_file)
+    if cfg.evaluation_mode not in ("full", "ica"):
+        raise ValueError("evaluation_mode must be 'full' or 'ica'")
+    if cfg.api_timeout <= 0:
+        raise ValueError("api_timeout must be positive")
     app = Flask(__name__, template_folder="templates", static_folder="static")
     # Trust reverse-proxy headers (including URL prefix) for URL generation.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -857,6 +930,9 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         ],
     }
 )
+    app.config["EVALUATION_MODE"] = cfg.evaluation_mode
+    app.config["TITLE"] = cfg.title
+    app.config["LOGO_URL"] = cfg.logo_url
     babel = Babel(app)
     app.secret_key = "super-secret"  # Necesario para CSRF en Flask-WTF
 
@@ -1025,23 +1101,21 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 with open(cfg.sample_file, "r", encoding="utf-8") as f:
                     json_data = json.load(f)
                 raw_response = json_data if isinstance(json_data, dict) else {}
-                # Selecciona la primera clave que no sea evaluator_logs
-                for k, v in json_data.items():
-                    if k != "evaluator_logs":
-                        result_data = v
-                        break
             else:
                 payload: Dict[str, Any] = {"id": item_id, "repo": repo, "lang": g.language}
-                resp = requests.post(endpoint, json=payload, timeout=180)
+                if cfg.evaluation_mode == "ica":
+                    # The published data_test schema requires url; load_plugin uses id/repo.
+                    payload["url"] = item_id
+                resp = requests.post(endpoint, json=payload, timeout=cfg.api_timeout)
                 resp.raise_for_status()
                 resp_json = resp.json()
                 raw_response = resp_json if isinstance(resp_json, dict) else {}
-                for k, v in resp_json.items():
-                    if k != "evaluator_logs":
-                        result_data = v
-                        break
+            result_data = normalize_evaluation_response(raw_response, item_id, cfg.evaluation_mode)
         except Exception as exc:
-            return render_template("error.html", error=build_api_error_message(exc, endpoint))
+            error = build_api_error_message(exc, endpoint)
+            if cfg.evaluation_mode == "ica":
+                error = "ICA (data_01): " + error + " No FAIR tests were requested."
+            return render_template("error.html", error=error)
 
         if not result_data:
             return render_template(
@@ -1257,7 +1331,12 @@ def create_app(config: Optional[Settings] = None) -> Flask:
         p_acc  = principles.get("accessible", {})
         p_int  = principles.get("interoperable", {})
         p_reu  = principles.get("reusable", {})
-        data_tests = _data_tests_list(result_data.get("data_test", {}) or {})
+        raw_data_tests = result_data.get("data_test", {}) or {}
+        data_tests = _data_tests_list(raw_data_tests)
+        ica = next((build_ica(test, g.language) for key, test in raw_data_tests.items()
+                    if str(key).lower() == "data_01" and isinstance(test, dict)), None)
+        if ica:
+            data_tests = [test for test in data_tests if test["id"].lower() != "data_01"]
 
         summary_by_area = {
             "Findable": {
@@ -1295,11 +1374,13 @@ def create_app(config: Optional[Settings] = None) -> Flask:
                 "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
                 "language": g.language,
                 "endpoint": endpoint,
+                "evaluation_mode": cfg.evaluation_mode,
             },
             "raw_response": raw_response,
             "summary_by_area": summary_by_area,
             "indicators_by_area": indicators_by_area,
             "data_tests": data_tests,
+            "ica": ica,
         }
         report_id = uuid.uuid4().hex
         report_payload["metadata"]["report_id"] = report_id
@@ -1333,6 +1414,8 @@ def create_app(config: Optional[Settings] = None) -> Flask:
             summary_by_area=summary_by_area,
             indicators_by_area=indicators_by_area,
             data_tests=data_tests,
+            ica=ica,
+            ica_only=cfg.evaluation_mode == "ica",
             chart_kind="radar",
             download_url=download_url,
             pdf_url=pdf_url,
@@ -1417,6 +1500,8 @@ def main() -> None:
     parser.add_argument("--logo-url", default=None, help="URL to link the logo")
     parser.add_argument("--logo-image", default=None, help="Logo image file in static/img")
     parser.add_argument("--dev", action="store_true", help="Enable development mode (load JSON file)")
+    parser.add_argument("--evaluation-mode", choices=("full", "ica"), default=None,
+                        help="Run all tests or only data_01 (ICA)")
     parser.add_argument("--sample-file", default=None, help="Path to sample JSON file for --dev")
     args = parser.parse_args()
 
@@ -1437,5 +1522,7 @@ def main() -> None:
         cfg.dev_mode = True
     if args.sample_file:
         cfg.sample_file = args.sample_file
+    if args.evaluation_mode:
+        cfg.evaluation_mode = args.evaluation_mode
     app = create_app(cfg)
     app.run(host=args.host, port=args.port, debug=cfg.dev_mode)
